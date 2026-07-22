@@ -2,6 +2,7 @@ import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 
 import en from './locales/en.json';
+import vi from './locales/vi.json';
 import es from './locales/es.json';
 import ru from './locales/ru.json';
 import zhCN from './locales/zh-CN.json';
@@ -20,6 +21,7 @@ i18n
   .init({
     resources: {
       en: { translation: en },
+      vi: { translation: vi },
       es: { translation: es },
       ru: { translation: ru },
       'zh-CN': { translation: zhCN },
