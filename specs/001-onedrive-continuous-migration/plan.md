@@ -35,7 +35,7 @@ OneDrive Continuous Migration cho phép người dùng tự động đồng bộ
 
 **Ràng buộc**:
 - Đồng thời upload = 1 (ép buộc ở backend)
-- Pacing giữa các upload: 45-90s (file nhỏ), 15-30s (file lớn)
+- Pacing giữa các upload: ≤1 MiB: 45-90s; 1-10 MiB: 30-60s; >10 MiB: 15-30s
 - FLOOD_WAIT cooldown phải tồn tại qua restart
 - Token Microsoft phải được mã hóa trước khi lưu đĩa
 
@@ -193,12 +193,15 @@ Xem chi tiết tại `data-model.md` (sẽ được tạo). Tóm tắt các enti
 | `migration_cancel_job(job_id)` | invoke | Hủy migration |
 | `migration_skip_item(job_id, item_id)` | invoke | Bỏ qua file lỗi |
 | `migration_retry_item(job_id, item_id)` | invoke | Thử lại file lỗi |
-| `migration_get_status(job_id)` | invoke | Lấy trạng thái job + items |
-| `migration_get_events(job_id, limit, offset)` | invoke | Lấy nhật ký sự kiện |
+| `migration_get_jobs()` | invoke | Lấy danh sách tất cả job (summary) |
+| `migration_get_job_detail(job_id, status_filter?, page?, page_size?)` | invoke | Lấy chi tiết job + items (phân trang, lọc) |
+| `migration_get_events(job_id, severity?, limit?, offset?)` | invoke | Lấy nhật ký sự kiện (phân trang, lọc severity) |
+| `migration_run_preflight(config)` | invoke | Chạy kiểm tra trước khi khởi động |
 | `microsoft_connect()` | invoke | Bắt đầu OAuth PKCE, trả về auth URL |
 | `microsoft_complete_auth(code, state)` | invoke | Hoàn thành OAuth với auth code |
 | `microsoft_disconnect()` | invoke | Ngắt kết nối Microsoft |
 | `microsoft_status()` | invoke | Trạng thái kết nối Microsoft |
+| `microsoft_get_drives()` | invoke | Lấy danh sách drives khả dụng |
 | `microsoft_list_folders(drive_id, path)` | invoke | Duyệt thư mục OneDrive |
 
 #### 2.2 Tauri Events (Backend → Frontend)
@@ -211,6 +214,7 @@ Xem chi tiết tại `data-model.md` (sẽ được tạo). Tóm tắt các enti
 | `migration-download-progress` | `{item_id, bytes, total}` | Tiến trình download file |
 | `migration-upload-progress` | `{item_id, bytes, total}` | Tiến trình upload file |
 | `migration-cooldown-update` | `{service, until}` | Cập nhật thời gian cooldown |
+| `migration-scan-progress` | `{job_id, phase, items_found, items_added}` | Tiến trình quét delta |
 | `migration-disk-warning` | `{free_bytes, required_bytes}` | Cảnh báo dung lượng đĩa thấp |
 | `migration-auth-required` | `{service}` | Yêu cầu xác thực lại |
 
@@ -358,6 +362,6 @@ Tất cả các artifacts của quy trình speckit (specify → plan → tasks) 
 | Bước | Artifact | Trạng thái |
 |---|---|---|
 | `/speckit.specify` | `spec.md` | ✅ Hoàn tất — 5 US, 32 FR, 6 SC, 9 Edge Cases |
-| `/speckit.plan` | `plan.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md` | ✅ Hoàn tất — 8 research decisions, 5 entities, 15 commands, 9 events |
-| `/speckit.tasks` | `tasks.md` | ✅ Hoàn tất — 141 tasks, 8 phases, dependency graph |
+| `/speckit.plan` | `plan.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md` | ✅ Hoàn tất — 11 research decisions, 5 entities, 17 commands, 9 events |
+| `/speckit.tasks` | `tasks.md` | ✅ Hoàn tất — 161 tasks, 9 phases, dependency graph |
 | **Tiếp theo** | `/speckit.implement` | 🔜 Sẵn sàng triển khai |

@@ -251,12 +251,12 @@ Hàng singleton cho mỗi dịch vụ bên ngoài.
 
 | Cấp độ | Pacing delay multiplier | Mô tả |
 |---|---|---|
-| 0 (Normal) | 1.0× | Hoạt động bình thường |
-| 1 (Conservative) | 1.5× | Sau 1 lần FLOOD_WAIT |
-| 2 (Restricted) | 2.0× | Sau 2+ lần FLOOD_WAIT |
-| 3 (Cooldown) | ∞ (chặn hoàn toàn) | Đang trong FLOOD_WAIT |
+| 0 (NORMAL) | 1.0× | Hoạt động bình thường; mặc định |
+| 1 (CONSERVATIVE) | 1.5× | Đạt được từ RESTRICTED sau 100 upload liên tiếp không flood |
+| 2 (RESTRICTED) | 2.0× | Sau khi COOLDOWN hết hạn |
+| 3 (COOLDOWN) | ∞ (chặn hoàn toàn) | Đang trong FLOOD_WAIT |
 
-Giảm cấp sau 50 lần thành công liên tiếp.
+**Chuyển đổi**: NORMAL → (FLOOD_WAIT) COOLDOWN → (hết hạn) RESTRICTED → (100 upload thành công liên tiếp) CONSERVATIVE → (500 upload thành công hoặc 24h không flood) NORMAL.
 
 ---
 

@@ -100,7 +100,7 @@ Phase 9: Metrics, CI & Soak (PR 10)
 - [ ] T012 Triển khai `validate_item_transition(from, to) -> Result<(), String>` trong `app/src-tauri/src/migration/state_machine.rs`: kiểm tra tất cả chuyển đổi item hợp lệ theo data-model
 - [ ] T013 Triển khai CRUD cho `migration_jobs` trong `app/src-tauri/src/migration/db.rs`: `create_job()`, `get_job()`, `get_all_jobs()`, `update_job_status()`, `update_job_cooldown()`
 - [ ] T014 [P] Triển khai CRUD cho `migration_items` trong `app/src-tauri/src/migration/db.rs`: `create_item()`, `get_items_by_job()`, `get_next_queued_item()`, `update_item_status()`, `update_item_progress()`, `get_items_for_recovery()`
-- [ ] T015 [P] Triển khai CRUD cho `migration_events` trong `app/src-tauri/src/migration/db.rs`: `insert_event()`, `get_events_by_job()` với phân trang, `cleanup_old_events()` (xóa > 90 ngày)
+- [ ] T015 [P] Triển khai CRUD cho `migration_events` trong `app/src-tauri/src/migration/db.rs`: `insert_event()` (có emit `migration-event` qua AppHandle), `get_events_by_job()` với phân trang + lọc severity, `cleanup_old_events()` (xóa > 90 ngày, giới hạn 100,000 events/job)
 - [ ] T016 Triển khai CRUD cho `rate_limit_state` trong `app/src-tauri/src/migration/db.rs`: `get_rate_limit()`, `update_rate_limit()`, `reset_rate_limit()`
 - [ ] T017 [P] Triển khai `WorkerHeartbeat` trong `app/src-tauri/src/migration/db.rs`: `update_heartbeat()` (gọi mỗi 5s), `get_heartbeat()`
 - [ ] T018 Tích hợp `MigrationDb` vào Tauri state trong `app/src-tauri/src/lib.rs`: khởi tạo `init_migration_db()` lúc app setup, bọc trong `Arc<Mutex<>>`, đăng ký qua `app.manage()`
@@ -194,8 +194,8 @@ Phase 9: Metrics, CI & Soak (PR 10)
 - [ ] T053 Triển khai `run_scheduler(job_id)` trong `app/src-tauri/src/migration/scheduler.rs`: vòng lặp chính — (1) quét file mới qua Delta API, (2) xử lý stability window, (3) dequeue item tiếp theo, (4) download → upload → verify → (tùy chọn delete), (5) emit events
 - [ ] T054 Triển khai delta scan cycle trong `app/src-tauri/src/migration/scheduler.rs`: `scan_cycle()` gọi `initial_delta()` hoặc `incremental_delta()`, lọc file theo `include_patterns`/`exclude_patterns`/`min_size_bytes` (glob, case-insensitive, trên relative path, exclude thắng include, default exclusions: `~$*`, `*.tmp`, `*.partial`, `*.crdownload`, `desktop.ini`, `Thumbs.db`, `.DS_Store`), tạo `MigrationItem` với status `discovered`
 - [ ] T055 Triển khai stability window trong `app/src-tauri/src/migration/scheduler.rs`: `process_stability()` — item `discovered` chuyển sang `stabilizing`, lưu `stable_first_seen_at`; mỗi lần quét tăng `stable_observation_count`; khi `(now - stable_first_seen_at) >= stability_window_seconds` → chuyển sang `queued`
-- [ ] T056 Triển khai download phase trong `app/src-tauri/src/migration/scheduler.rs`: `process_download(item)` — chuyển status `downloading`, kiểm tra disk space, gọi `downloader.download_file()` với Range resume nếu có `.part`, emit `migration-download-progress`, chuyển `downloaded`
-- [ ] T057 Triển khai upload phase trong `app/src-tauri/src/migration/scheduler.rs`: `process_upload(item)` — chuyển status `uploading`, gọi `scheduler_tx.send(MutationRequest::UploadFile{...})` với `source: MutationSource::Migration(job_id)`, đợi `oneshot::Receiver`, lưu `telegram_message_id`, chuyển `uploaded`, emit `migration-upload-progress`
+- [ ] T056 Triển khai download phase trong `app/src-tauri/src/migration/scheduler.rs`: `process_download(item)` — chuyển status `downloading`, kiểm tra disk space, gọi `downloader.download_file()` với Range resume nếu có `.part`, emit `migration-download-progress` với payload `{item_id, job_id, file_name, bytes_downloaded, total_bytes, speed_bytes_per_sec, percentage}`, chuyển `downloaded`
+- [ ] T057 Triển khai upload phase trong `app/src-tauri/src/migration/scheduler.rs`: `process_upload(item)` — chuyển status `uploading`, gọi `scheduler_tx.send(MutationRequest::UploadFile{...})` với `source: MutationSource::Migration(job_id)`, đợi `oneshot::Receiver`, lưu `telegram_message_id`, chuyển `uploaded`, emit `migration-upload-progress` với payload `{item_id, job_id, file_name, bytes_uploaded, total_bytes, speed_bytes_per_sec, percentage}`
 - [ ] T058 Triển khai verify phase trong `app/src-tauri/src/migration/scheduler.rs`: `process_verify(item)` — chuyển `verifying`, gọi `client.get_messages_by_id(destination, message_id)`, kiểm tra file tồn tại + khớp tên + khớp kích thước, chuyển `verified`
 - [ ] T059 Triển khai error handling trong `app/src-tauri/src/migration/scheduler.rs`: `handle_item_error(item, error)` — phân loại lỗi (`retryable`, `cooldown`, `auth`, `permanent`, `conflict`), tăng `attempt_count`, set `next_retry_at` với backoff, nếu `permanent` sau 3 lần → chuyển `quarantined`
 - [ ] T060 Triển khai job status management trong `app/src-tauri/src/migration/scheduler.rs`: `update_job_status()` theo dõi tất cả items — nếu tất cả terminal → `completed`; nếu có lỗi fatal → `fatal`; emit `migration-job-updated`
@@ -234,6 +234,8 @@ Phase 9: Metrics, CI & Soak (PR 10)
 - [ ] T078 [P] Triển khai emit `migration-cooldown-update` khi flood guard thay đổi trạng thái trong `app/src-tauri/src/migration/flood_guard.rs`
 - [ ] T079 Triển khai emit `migration-disk-warning` khi dung lượng đĩa thấp trong `app/src-tauri/src/migration/downloader.rs`
 - [ ] T080 Triển khai emit `migration-auth-required` khi token Microsoft hết hạn trong `app/src-tauri/src/migration/graph.rs`
+- [ ] T080d [P] Triển khai emit `migration-scan-progress` trong `app/src-tauri/src/migration/scheduler.rs`: phát ra mỗi page delta với `{job_id, phase, items_found, items_added}` [NEW]
+- [ ] T080e [P] Đảm bảo emit `migration-event` được gọi trong `insert_event()` tại `app/src-tauri/src/migration/db.rs` (T015) — mỗi khi insert event mới vào DB [NEW]
 
 ---
 
@@ -317,9 +319,10 @@ Phase 9: Metrics, CI & Soak (PR 10)
 - [ ] T106 [US3] Triển khai phục hồi `deleting_source` / `delete_failed`: kiểm tra file nguồn có còn tồn tại trên OneDrive không → nếu không: `completed`; nếu có: retry delete với eTag
 - [ ] T107 [US3] Triển khai idempotency guarantee: trước khi tạo `MigrationItem`, kiểm tra `UNIQUE(job_id, drive_item_id, source_etag)` → nếu đã tồn tại, bỏ qua
 - [ ] T108 [US3] Triển khai phục hồi cooldown: `reconcile_on_startup()` đọc `rate_limit_state` → nếu `cooldown_until > now()`, đặt job vào trạng thái `telegram_cooldown` hoặc `graph_cooldown`
-- [ ] T109 [US3] Kiểm thử thủ công phục hồi theo `quickstart.md` Kịch bản 3: kill process khi đang download, đang upload, đang verify — xác nhận mọi case phục hồi đúng
+- [ ] T109 [US3] Kiểm thử thủ công phục hồi theo `quickstart.md` Kịch bản C: kill process khi đang download, đang upload, đang verify — xác nhận mọi case phục hồi đúng
+- [ ] T109a [P] [US3] Xác minh commit-before-action pattern: viết integration test kiểm tra crash xảy ra TRƯỚC mỗi external call (download/upload/verify/delete) — xác nhận trạng thái mới đã được commit vào DB, phục hồi đúng từ trạng thái đã commit [NEW]
 
-**Checkpoint**: US3 hoàn chỉnh — migration phục hồi an toàn sau mọi loại crash.
+**Checkpoint**: US3 hoàn chỉnh — migration phục hồi an toàn sau mọi loại crash, commit-before-action verified.
 
 ---
 
@@ -393,8 +396,9 @@ Phase 9: Metrics, CI & Soak (PR 10)
 
 - [ ] T132 Chạy `quickstart.md` Kịch bản 1 end-to-end: wizard → migration cơ bản → xác nhận file trong Telegram
 - [ ] T133 [P] Chạy `quickstart.md` Kịch bản 2: close-to-tray → đợi → mở lại dashboard
-- [ ] T134 [P] Chạy `quickstart.md` Kịch bản 3: crash recovery ở download, upload, verify phases (bao gồm multi-match conflict)
-- [ ] T135 [P] Chạy `quickstart.md` Kịch bản 4: tạm dừng/tiếp tục, bỏ qua file lỗi, hủy migration
+- [ ] T133 [P] Chạy `quickstart.md` Kịch bản C: crash recovery ở download, upload, verify phases (bao gồm multi-match conflict)
+- [ ] T133a [P] [SC-005] Đo lường định lượng background throughput: chạy migration với N=50 file xác định (kích thước phân bố theo 3 pacing ranges), đóng cửa sổ 1 giờ, mở lại và tính `completed_in_window / expected_in_window`; xác nhận ≥ 80% [NEW]
+- [ ] T134 [P] Chạy `quickstart.md` Kịch bản D: Telegram cooldown + restart trong cooldown
 - [ ] T136 [P] Chạy `quickstart.md` Kịch bản 5: xóa nguồn sau upload (bao gồm eTag mismatch → source_changed, 404 → completed)
 
 ---
@@ -520,16 +524,16 @@ Phase 8 nội bộ:
 
 | Phase | Số task | ID range |
 |---|---|---|
-| Phase 1: Setup | 6 | T001-T005, T004a |
-| Phase 2: Foundational | 46 | T006-T051 |
-| Phase 3: US1 (MVP) | 43 | T052-T094 |
-| Phase 4: US2 | 9 | T095-T102, T096a |
-| Phase 5: US3 | 7 | T103-T109 |
-| Phase 6: US4 | 8 | T110-T117 |
-| Phase 7: US5 | 5 | T118-T122 |
-| Phase 8: Polish | 19 | T123-T141 |
-| Phase 9: Metrics & CI | 13 | T142-T154 |
-| **Tổng** | **156** | |
+| Phase 1: Setup | 6 | T001–T005, T004a |
+| Phase 2: Foundational | 46 | T006–T051 |
+| Phase 3: US1 (MVP) | 48 | T052–T094, T080a–T080e |
+| Phase 4: US2 | 9 | T095–T102, T096a |
+| Phase 5: US3 | 7 | T103–T109 |
+| Phase 6: US4 | 8 | T110–T117 |
+| Phase 7: US5 | 5 | T118–T122 |
+| Phase 8: Polish | 19 | T123–T141 |
+| Phase 9: Metrics & CI | 13 | T142–T154 |
+| **Tổng** | **163** | |
 
 ---
 
