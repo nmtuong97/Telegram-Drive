@@ -32,15 +32,23 @@ Lưu trữ metadata local bằng SQLite. Raw SQL queries, migration thủ công.
 ### V. Spec-Driven Development
 Tuân theo quy trình SDD: Constitution → Specify → Plan → Tasks → Implement → Converge. Mọi tính năng đều phải có spec trước khi implement.
 
-### VI. Background Processing (Amendment 1.1.0)
-Background workers chạy trong Tauri process (in-process), dùng Tokio task. Phải có:
+### VI. Background Processing (Amendment 1.2.0)
+Background workers chạy trong Tauri process (in-process), dùng Tokio task. Long-running work phải nằm trong Rust backend; React frontend không được sở hữu worker dài hạn. Phải có persistent checkpoints khi feature requirement yêu cầu resume sau restart. Tauri IPC là boundary giữa frontend và backend.
+
+**Yêu cầu bắt buộc khi feature cam kết unattended/background operation** (sau khi đóng cửa sổ hoặc đăng nhập OS):
 - System tray để giữ process sống khi đóng cửa sổ
 - Close-to-tray behavior (đóng cửa sổ = ẩn, không thoát)
 - Tự động khởi động cùng OS (autostart)
 - Single-instance guard để ngăn nhiều worker
-- Tự động phục hồi trạng thái từ SQLite khi process khởi động lại
 
-Worker không chạy khi toàn bộ Tauri process bị terminate. Autostart là cơ chế phục hồi chính cho MVP. OS supervisor (launchd/systemd) là hướng hardening tương lai.
+**Đối với feature chỉ cam kết chạy khi Tauri process đang mở**:
+- Không bắt buộc system tray.
+- Không bắt buộc autostart.
+- Không bắt buộc sidecar hoặc OS service.
+- Manual Resume sau khi mở lại app là hợp constitution.
+- Tự động phục hồi trạng thái từ SQLite khi process khởi động lại.
+
+Worker không chạy khi toàn bộ Tauri process bị terminate. Đối với feature yêu cầu unattended operation, autostart là cơ chế phục hồi chính. OS supervisor (launchd/systemd) là hướng hardening tương lai.
 
 ## Công nghệ chính
 
@@ -66,22 +74,20 @@ Worker không chạy khi toàn bộ Tauri process bị terminate. Autostart là 
 - Mọi PR/review phải verify compliance với constitution
 - Ngôn ngữ giao tiếp Tiếng Việt là NON-NEGOTIABLE
 
-## Sync Impact Report (v1.0.0 → v1.1.0)
+## Sync Impact Report (v1.1.0 → v1.2.0)
 
-**Loại amendment**: MINOR — mở rộng và giải thích phạm vi nguyên tắc hiện có, không thay đổi nguyên tắc cốt lõi.
+**Loại amendment**: MINOR — làm rõ phạm vi Principle VI, phân biệt giữa feature yêu cầu unattended operation và feature chỉ chạy khi app mở.
 
 **Nguyên tắc thay đổi**:
-- **Principle I (Actix Web)**: Làm rõ Actix Web chỉ bắt buộc cho HTTP server và API routes. Cho phép Tokio task cho background orchestration, scheduler, downloader.
-- **Principle III (Telegram MTProto)**: Làm rõ background worker và UI dùng chung TelegramState.
-- **Principle IV (SQLite)**: Cho phép database riêng cho background worker.
-- **Thêm Principle VI (Background Processing)**: Định nghĩa yêu cầu cho background workers.
+- **Principle VI (Background Processing)**: Làm rõ system tray, close-to-tray, autostart, single-instance guard chỉ bắt buộc khi feature specification cam kết unattended/background operation sau khi đóng cửa sổ hoặc đăng nhập OS. Feature chỉ cam kết chạy khi Tauri process mở không bắt buộc các cơ chế này; Manual Resume là hợp constitution.
 
-**Lý do**: OneDrive Continuous Migration cần long-running background worker. Actix không phù hợp cho background orchestration. Amendment này cho phép Tokio tasks mà không phá vỡ kiến trúc hiện tại.
+**Lý do**: Feature MVP OneDrive Migration chỉ cam kết chạy khi Tauri process đang mở, không yêu cầu unattended operation. Amendment này cho phép MVP không cần system tray/autostart mà không vi phạm constitution.
 
 **Ảnh hưởng đến artifacts hiện có**:
-- Không làm suy yếu Tauri IPC, Telegram MTProto, SQLite, Spec-Driven Development.
-- Spec, plan, tasks của active feature (001-onedrive-continuous-migration) đã được thiết kế phù hợp với amendment này.
+- Không làm suy yếu các nguyên tắc khác.
+- Feature 001-onedrive-migration plan đã được cập nhật để phản ánh amendment này.
+- Các template không cần thay đổi.
 
-**Phiên bản trước**: 1.0.0
+**Phiên bản trước**: 1.1.0
 
-**Version**: 1.1.0 | **Ratified**: 2026-07-23 | **Last Amended**: 2026-07-23
+**Version**: 1.2.0 | **Ratified**: 2026-07-23 | **Last Amended**: 2026-07-23
