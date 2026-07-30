@@ -82,4 +82,6 @@ sealed interface LibraryState {
 sealed interface PreviewTarget {
   data class Image(val itemId: Long, val path: String) : PreviewTarget
   data class Video(val itemId: Long, val path: String) : PreviewTarget
+  data class Audio(val itemId: Long, val path: String) : PreviewTarget
+  data class Pdf(val itemId: Long, val path: String) : PreviewTarget
 }

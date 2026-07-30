@@ -1,6 +1,7 @@
 package com.nmtuong.telegramdrive.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +32,8 @@ fun AppNavigation(container: AppContainer) {
   when (val target = preview) {
     is PreviewTarget.Image -> ImagePreviewScreen(target.path) { preview = null }
     is PreviewTarget.Video -> VideoPreviewScreen(target.path) { preview = null }
+    is PreviewTarget.Audio -> Text("Audio Preview (Coming soon)") // TODO: implement
+    is PreviewTarget.Pdf -> Text("PDF Preview (Coming soon)") // TODO: implement
     null -> if (authorization.state == AuthorizationState.Ready) {
       LibraryScreen(libraryViewModel) { preview = it }
     } else {

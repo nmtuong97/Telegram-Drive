@@ -5,8 +5,10 @@ import com.nmtuong.telegramdrive.domain.*
 import com.nmtuong.telegramdrive.security.SensitiveDataRedactor
 import com.nmtuong.telegramdrive.security.TelegramApiConfiguration
 import java.io.File
+import com.nmtuong.telegramdrive.security.DatabaseEncryptionManager
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,12 +27,16 @@ class TdLibJsonGateway internal constructor(
   private val json = Json { ignoreUnknownKeys = true }
   private val databaseDirectory = context?.filesDir?.resolve("tdlib/database") ?: File("tdlib-test/database")
   private val filesDirectory = context?.filesDir?.resolve("tdlib/files") ?: File("tdlib-test/files")
+  private val encryptionManager = context?.let { DatabaseEncryptionManager(it) }
   private var lifecycle = GatewayLifecycle.NEW
   private var worker: Job? = null
   private var clientId: Int? = null
   private var countedClient = false
   private var pendingAuthAction = false
   private var pendingAuthRequest: String? = null
+  private val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
+  
+  // For compatibility with previous code, kept intact for now
   private var pendingParametersRequest: String? = null
   private var pendingLibraryRequest: String? = null
   private var pendingHistoryLimit = 50
@@ -92,6 +98,17 @@ class TdLibJsonGateway internal constructor(
   private fun handleResponse(raw: String) {
     val root = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrElse { return }
     val type = root.string("@type") ?: return
+    val extra = root.string("@extra")
+    if (extra != null) {
+      val deferred = pendingRequests.remove(extra)
+      if (deferred != null) {
+        if (type == "error") {
+          deferred.completeExceptionally(RuntimeException(root.string("message") ?: "TDLib Error"))
+        } else {
+          deferred.complete(root)
+        }
+      }
+    }
     when (type) {
       "updateAuthorizationState" -> handleAuthorization(root.obj("authorization_state") ?: return)
       "authorizationStateWaitTdlibParameters", "authorizationStateWaitPhoneNumber",
@@ -103,7 +120,8 @@ class TdLibJsonGateway internal constructor(
         val fileId = root.int("id")
         if (synchronized(lock) { pendingDownloadRequests[fileId] == root.string("@extra") }) handleFile(root)
       }
-      "user" -> if (synchronized(lock) { pendingLibraryRequest == root.string("@extra") }) requestSavedHistory(root.long("id"))
+      "user" -> if (synchronized(lock) { pendingLibraryRequest == root.string("@extra") }) requestPrivateChat(root.long("id"))
+      "chat" -> if (synchronized(lock) { pendingLibraryRequest == root.string("@extra") }) requestSavedHistory(root.long("id"))
       "messages" -> if (synchronized(lock) { pendingLibraryRequest == root.string("@extra") }) {
         synchronized(lock) { pendingLibraryRequest = null }
         handleMessages(root)
@@ -141,7 +159,7 @@ class TdLibJsonGateway internal constructor(
       put("use_test_dc", false)
       put("database_directory", databaseDirectory.absolutePath)
       put("files_directory", filesDirectory.absolutePath)
-      put("database_encryption_key", "")
+      put("database_encryption_key", encryptionManager?.getOrGenerateKey() ?: "")
       put("use_file_database", true)
       put("use_chat_info_database", true)
       put("use_message_database", true)
@@ -173,7 +191,12 @@ class TdLibJsonGateway internal constructor(
         is AuthorizationAction.SubmitEmailAddress -> if (current == AuthorizationState.WaitingForEmailAddress) request("setAuthenticationEmailAddress", "email_address" to action.email) else null
         is AuthorizationAction.SubmitEmailCode -> if (current == AuthorizationState.WaitingForEmailCode) request("checkAuthenticationEmailCode", "code" to buildJsonObject { put("@type", "emailAddressAuthenticationCode"); put("code", action.code) }) else null
         AuthorizationAction.Logout -> if (current == AuthorizationState.Ready) buildJsonObject { put("@type", "logOut") } else null
-        AuthorizationAction.Reset -> buildJsonObject { put("@type", "destroy") }
+        AuthorizationAction.Reset -> {
+            encryptionManager?.clearKey()
+            databaseDirectory.deleteRecursively()
+            filesDirectory.deleteRecursively()
+            buildJsonObject { put("@type", "destroy") }
+        }
       } ?: return ActionResult.INVALID_STATE
       pendingAuthAction = true
       val enveloped = requestEnvelope("auth", built)
@@ -196,10 +219,20 @@ class TdLibJsonGateway internal constructor(
     return ActionResult.ACCEPTED
   }
 
-  private fun requestSavedHistory(selfId: Long) {
+  private fun requestPrivateChat(userId: Long) {
+    val request = requestEnvelope("chat", buildJsonObject {
+      put("@type", "createPrivateChat")
+      put("user_id", userId)
+      put("force", true)
+    })
+    synchronized(lock) { pendingLibraryRequest = request.string("@extra") }
+    send(request)
+  }
+
+  private fun requestSavedHistory(chatId: Long) {
     val request = requestEnvelope("history", buildJsonObject {
       put("@type", "getChatHistory")
-      put("chat_id", selfId)
+      put("chat_id", chatId)
       put("from_message_id", 0)
       put("offset", 0)
       put("limit", pendingHistoryLimit)
@@ -207,6 +240,15 @@ class TdLibJsonGateway internal constructor(
     })
     synchronized(lock) { pendingLibraryRequest = request.string("@extra") }
     send(request)
+  }
+
+  suspend fun execute(request: JsonObject): JsonObject {
+    val envelope = requestEnvelope(request.string("@type") ?: "unknown", request)
+    val extra = envelope.string("@extra") ?: return buildJsonObject { put("@type", "error") }
+    val deferred = CompletableDeferred<JsonObject>()
+    pendingRequests[extra] = deferred
+    send(envelope)
+    return deferred.await()
   }
 
   private fun handleMessages(root: JsonObject) {
@@ -240,9 +282,19 @@ class TdLibJsonGateway internal constructor(
         media = content.obj("animation") ?: return null; file = media.obj("animation") ?: return null
         kind = MediaKind.ANIMATION; name = media.string("file_name").orEmpty().ifBlank { "animation-$messageId" }; duration = media.int("duration")
       }
+      "messageAudio" -> {
+        media = content.obj("audio") ?: return null; file = media.obj("audio") ?: return null
+        kind = MediaKind.AUDIO; name = media.string("file_name").orEmpty().ifBlank { "audio-$messageId.mp3" }; duration = media.int("duration")
+      }
+      "messageVoiceNote" -> {
+        media = content.obj("voice_note") ?: return null; file = media.obj("voice") ?: return null
+        kind = MediaKind.AUDIO; name = "voice-$messageId.ogg"; duration = media.int("duration")
+      }
       "messageDocument" -> {
         media = content.obj("document") ?: return null; file = media.obj("document") ?: return null
-        kind = MediaKind.DOCUMENT; name = media.string("file_name").orEmpty().ifBlank { "document-$messageId" }; duration = 0
+        val mimeType = media.string("mime_type").orEmpty()
+        kind = if (mimeType == "application/pdf") MediaKind.PDF else MediaKind.DOCUMENT
+        name = media.string("file_name").orEmpty().ifBlank { "document-$messageId" }; duration = 0
       }
       else -> return null
     }
@@ -324,8 +376,28 @@ class TdLibJsonGateway internal constructor(
     return when (item.kind) {
       MediaKind.IMAGE -> PreviewTarget.Image(item.id, path)
       MediaKind.VIDEO -> PreviewTarget.Video(item.id, path)
+      MediaKind.AUDIO -> PreviewTarget.Audio(item.id, path)
+      MediaKind.PDF -> PreviewTarget.Pdf(item.id, path)
       else -> null
     }
+  }
+
+  override suspend fun getSavedMessagesChatId(): Long? {
+    val meRequest = buildJsonObject { put("@type", "getMe") }
+    val meResponse = execute(meRequest)
+    val userId = meResponse.long("id") ?: return null
+
+    val chatRequest = buildJsonObject {
+      put("@type", "createPrivateChat")
+      put("user_id", userId)
+      put("force", true)
+    }
+    val chatResponse = execute(chatRequest)
+    return chatResponse.long("id")
+  }
+
+  override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> {
+    return com.nmtuong.telegramdrive.data.TdLibPagingSource(this, chatId)
   }
 
   private fun updateItem(fileId: Int, transform: (MediaItem) -> MediaItem) {
@@ -357,7 +429,7 @@ class TdLibJsonGateway internal constructor(
         pendingAuthRequest = null
         mutableAuthorization.value = mutableAuthorization.value.copy(actionPending = false, safeError = message)
       }
-      (request == "getMe" || request == "history") && synchronized(lock) { pendingLibraryRequest == extra } -> {
+      (request == "getMe" || request == "chat" || request == "history") && synchronized(lock) { pendingLibraryRequest == extra } -> {
         synchronized(lock) { pendingLibraryRequest = null }
         mutableLibrary.value = LibraryState.Error(message)
       }
