@@ -46,4 +46,21 @@ class DatabaseEncryptionManagerTest {
         val key2 = encryptionManager.getOrGenerateKey()
         assertNotEquals("A new key should be generated after clearing", key1, key2)
     }
+
+    @Test
+    fun testMissingKeyStoreKey() {
+        val key1 = encryptionManager.getOrGenerateKey()
+        
+        // Simulate KeyStore deletion
+        val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore")
+        keyStore.load(null)
+        keyStore.deleteEntry("TelegramDriveDatabaseKeyAlias")
+
+        try {
+            encryptionManager.getOrGenerateKey()
+            fail("Expected IllegalStateException due to missing keystore key")
+        } catch (e: IllegalStateException) {
+            // Expected
+        }
+    }
 }

@@ -17,13 +17,14 @@ class TdLibPagingSource(
     try {
       val fromMessageId = params.key ?: 0L
       val limit = params.loadSize.coerceIn(1, 100)
+      val requestLimit = limit + if (fromMessageId == 0L) 0 else 1
 
       val request = buildJsonObject {
         put("@type", "getChatHistory")
         put("chat_id", chatId)
         put("from_message_id", fromMessageId)
         put("offset", 0)
-        put("limit", limit)
+        put("limit", requestLimit)
         put("only_local", false)
       }
 
@@ -33,9 +34,13 @@ class TdLibPagingSource(
       }
 
       val messages = response["messages"]?.jsonArray.orEmpty()
-      val items = messages.mapNotNull { 
+      var items = messages.mapNotNull { 
         gateway.mapMessageForTest(it.jsonObject.toString()) 
       }.distinctBy { it.fileId }
+
+      if (fromMessageId != 0L) {
+        items = items.filter { it.id != fromMessageId }
+      }
 
       val nextKey = if (items.isEmpty()) null else items.last().id
 

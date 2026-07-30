@@ -35,5 +35,12 @@ private class RecordingGateway : TdLibGateway {
   override fun download(fileId: Int) = ActionResult.ACCEPTED
   override fun cancelDownload(fileId: Int) = ActionResult.ACCEPTED
   override fun preview(itemId: Long): PreviewTarget? = null
+  override suspend fun getSavedMessagesChatId(): Long? = null
+  override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> {
+    return object : androidx.paging.PagingSource<Long, MediaItem>() {
+      override suspend fun load(params: LoadParams<Long>): LoadResult<Long, MediaItem> = LoadResult.Page(emptyList(), null, null)
+      override fun getRefreshKey(state: androidx.paging.PagingState<Long, MediaItem>): Long? = null
+    }
+  }
   override fun close() { closes++ }
 }

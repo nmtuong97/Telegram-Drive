@@ -2,6 +2,8 @@ package com.nmtuong.telegramdrive.feature.library
 
 import com.nmtuong.telegramdrive.data.TelegramRepository
 import com.nmtuong.telegramdrive.domain.DownloadState
+import com.nmtuong.telegramdrive.domain.LibraryState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,21 +33,43 @@ class DownloadCoordinator(
       semaphore.acquire()
       try {
         repository.download(fileId)
-        // Note: The actual progress and completion will still come from TdLibJsonGateway updateFile
-        // In a full implementation, we'd listen to the repository's file stream.
+        
+        repository.library.collect { state ->
+            if (state is LibraryState.Content) {
+                val item = state.items.firstOrNull { it.fileId == fileId }
+                if (item != null) {
+                    updateState(fileId, item.downloadState)
+                    if (item.downloadState is DownloadState.Complete || item.downloadState is DownloadState.Failed || item.downloadState is DownloadState.Canceled) {
+                        throw CancellationException("Terminal state reached")
+                    }
+                }
+            }
+        }
+      } catch (e: CancellationException) {
+        // Expected on terminal state
       } catch (e: Exception) {
         updateState(fileId, DownloadState.Failed(e.message ?: "Download failed"))
       } finally {
         semaphore.release()
+        downloadJobs.remove(fileId)
+        val currentState = _activeDownloads.value[fileId]
+        if (currentState is DownloadState.Complete || currentState is DownloadState.Canceled || currentState is DownloadState.Failed) {
+            _activeDownloads.value = _activeDownloads.value.toMutableMap().apply { remove(fileId) }
+        }
       }
     }
-    downloadJobs[fileId] = job
+    // Safely deduplicate
+    val previous = downloadJobs.putIfAbsent(fileId, job)
+    if (previous != null) {
+        job.cancel()
+    }
   }
 
   fun cancelDownload(fileId: Int) {
     downloadJobs.remove(fileId)?.cancel()
     repository.cancelDownload(fileId)
     updateState(fileId, DownloadState.Canceled)
+    _activeDownloads.value = _activeDownloads.value.toMutableMap().apply { remove(fileId) }
   }
 
   private fun updateState(fileId: Int, state: DownloadState) {

@@ -13,6 +13,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 
 class TdLibJsonGateway internal constructor(
@@ -176,8 +177,13 @@ class TdLibJsonGateway internal constructor(
   }
 
   override fun submit(action: AuthorizationAction): ActionResult {
+    if (action == AuthorizationAction.Reset) {
+      performReset()
+      return ActionResult.ACCEPTED
+    }
+
     val request = synchronized(lock) {
-      if (!configuration.configured && action !is AuthorizationAction.Reset) return ActionResult.MISSING_CONFIGURATION
+      if (!configuration.configured) return ActionResult.MISSING_CONFIGURATION
       if (pendingAuthAction) return ActionResult.DUPLICATE
       val current = mutableAuthorization.value.state
       val built = when (action) {
@@ -191,12 +197,7 @@ class TdLibJsonGateway internal constructor(
         is AuthorizationAction.SubmitEmailAddress -> if (current == AuthorizationState.WaitingForEmailAddress) request("setAuthenticationEmailAddress", "email_address" to action.email) else null
         is AuthorizationAction.SubmitEmailCode -> if (current == AuthorizationState.WaitingForEmailCode) request("checkAuthenticationEmailCode", "code" to buildJsonObject { put("@type", "emailAddressAuthenticationCode"); put("code", action.code) }) else null
         AuthorizationAction.Logout -> if (current == AuthorizationState.Ready) buildJsonObject { put("@type", "logOut") } else null
-        AuthorizationAction.Reset -> {
-            encryptionManager?.clearKey()
-            databaseDirectory.deleteRecursively()
-            filesDirectory.deleteRecursively()
-            buildJsonObject { put("@type", "destroy") }
-        }
+        AuthorizationAction.Reset -> null // Handled above
       } ?: return ActionResult.INVALID_STATE
       pendingAuthAction = true
       val enveloped = requestEnvelope("auth", built)
@@ -206,6 +207,30 @@ class TdLibJsonGateway internal constructor(
     }
     send(request)
     return ActionResult.ACCEPTED
+  }
+
+  private fun performReset() {
+    synchronized(lock) {
+      if (lifecycle == GatewayLifecycle.CLOSING || lifecycle == GatewayLifecycle.CLOSED) return
+      pendingAuthAction = true
+      pendingDownloads.clear()
+      pendingCancellations.clear()
+      pendingDownloadRequests.clear()
+      pendingCancelRequests.clear()
+    }
+    CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+      runCatching {
+        withTimeout(5000) {
+          execute(buildJsonObject { put("@type", "logOut") })
+          mutableAuthorization.first { it.state == AuthorizationState.Closed }
+        }
+      }
+      close()
+      delay(500) // allow close to finish processing
+      databaseDirectory.deleteRecursively()
+      filesDirectory.deleteRecursively()
+      encryptionManager?.clearKey()
+    }
   }
 
   override fun loadSavedMessages(limit: Int): ActionResult {
@@ -244,11 +269,33 @@ class TdLibJsonGateway internal constructor(
 
   suspend fun execute(request: JsonObject): JsonObject {
     val envelope = requestEnvelope(request.string("@type") ?: "unknown", request)
-    val extra = envelope.string("@extra") ?: return buildJsonObject { put("@type", "error") }
+    val extra = envelope.string("@extra") ?: return buildJsonObject { put("@type", "error"); put("message", "Invalid request") }
     val deferred = CompletableDeferred<JsonObject>()
     pendingRequests[extra] = deferred
+
+    synchronized(lock) {
+      if (lifecycle != GatewayLifecycle.RUNNING && lifecycle != GatewayLifecycle.STARTING) {
+        pendingRequests.remove(extra)
+        return buildJsonObject { put("@type", "error"); put("message", "Gateway is not running") }
+      }
+    }
+
     send(envelope)
-    return deferred.await()
+
+    return try {
+      withTimeout(15_000) {
+        deferred.await()
+      }
+    } catch (e: TimeoutCancellationException) {
+      pendingRequests.remove(extra)
+      buildJsonObject { put("@type", "error"); put("message", "Request timed out") }
+    } catch (e: CancellationException) {
+      pendingRequests.remove(extra)
+      throw e
+    } catch (e: Exception) {
+      pendingRequests.remove(extra)
+      buildJsonObject { put("@type", "error"); put("message", SensitiveDataRedactor.redact(e.message ?: "Unknown error")) }
+    }
   }
 
   private fun handleMessages(root: JsonObject) {
@@ -376,8 +423,6 @@ class TdLibJsonGateway internal constructor(
     return when (item.kind) {
       MediaKind.IMAGE -> PreviewTarget.Image(item.id, path)
       MediaKind.VIDEO -> PreviewTarget.Video(item.id, path)
-      MediaKind.AUDIO -> PreviewTarget.Audio(item.id, path)
-      MediaKind.PDF -> PreviewTarget.Pdf(item.id, path)
       else -> null
     }
   }
@@ -385,7 +430,9 @@ class TdLibJsonGateway internal constructor(
   override suspend fun getSavedMessagesChatId(): Long? {
     val meRequest = buildJsonObject { put("@type", "getMe") }
     val meResponse = execute(meRequest)
-    val userId = meResponse.long("id") ?: return null
+    if (meResponse.string("@type") == "error") return null
+    val userId = meResponse.long("id")
+    if (userId == 0L) return null
 
     val chatRequest = buildJsonObject {
       put("@type", "createPrivateChat")
@@ -393,7 +440,9 @@ class TdLibJsonGateway internal constructor(
       put("force", true)
     }
     val chatResponse = execute(chatRequest)
-    return chatResponse.long("id")
+    if (chatResponse.string("@type") == "error") return null
+    val chatId = chatResponse.long("id")
+    return if (chatId == 0L) null else chatId
   }
 
   override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> {
@@ -472,6 +521,7 @@ class TdLibJsonGateway internal constructor(
 
   override fun close() {
     val id: Int?
+    val cancelledRequests = mutableListOf<CompletableDeferred<JsonObject>>()
     synchronized(lock) {
       if (lifecycle == GatewayLifecycle.CLOSING || lifecycle == GatewayLifecycle.CLOSED) return
       transitionLocked(GatewayLifecycle.CLOSING)
@@ -487,7 +537,10 @@ class TdLibJsonGateway internal constructor(
       pendingAuthRequest = null
       pendingParametersRequest = null
       pendingLibraryRequest = null
+      cancelledRequests.addAll(pendingRequests.values)
+      pendingRequests.clear()
     }
+    cancelledRequests.forEach { it.completeExceptionally(CancellationException("Gateway closed")) }
     scope.launch {
       if (id != null) runCatching { native.send(id, "{\"@type\":\"close\"}") }
       synchronized(lock) {

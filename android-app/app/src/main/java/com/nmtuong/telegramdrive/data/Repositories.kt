@@ -26,6 +26,8 @@ class RealTelegramRepository(private val gateway: TdLibGateway) : TelegramReposi
   override fun download(fileId: Int) = gateway.download(fileId)
   override fun cancelDownload(fileId: Int) = gateway.cancelDownload(fileId)
   override fun preview(itemId: Long) = gateway.preview(itemId)
+  override suspend fun getSavedMessagesChatId(): Long? = gateway.getSavedMessagesChatId()
+  override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> = gateway.getChatHistoryPagingSource(chatId)
   override fun close() = gateway.close()
 }
 
@@ -143,6 +145,31 @@ class FakeTelegramRepository(
       MediaKind.IMAGE -> PreviewTarget.Image(item.id, path)
       MediaKind.VIDEO -> PreviewTarget.Video(item.id, path)
       else -> null
+    }
+  }
+
+  override suspend fun getSavedMessagesChatId(): Long? {
+    return catalog.sources.firstOrNull { it.savedMessages }?.id
+  }
+
+  override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> {
+    return object : androidx.paging.PagingSource<Long, MediaItem>() {
+      override suspend fun load(params: LoadParams<Long>): LoadResult<Long, MediaItem> {
+        val supportedKinds = setOf(MediaKind.IMAGE, MediaKind.VIDEO, MediaKind.ANIMATION, MediaKind.DOCUMENT)
+        val items = catalog.media.filter {
+          it.sourceId == chatId && it.kind in supportedKinds
+        }.sortedByDescending { it.id }
+        
+        val startIndex = params.key?.let { key -> items.indexOfFirst { it.id == key } } ?: 0
+        if (startIndex < 0) return LoadResult.Error(IllegalArgumentException("Invalid key"))
+        
+        val limit = params.loadSize
+        val pageItems = items.drop(startIndex).take(limit).map { it.copy(downloadState = DownloadState.NotDownloaded, localPath = null) }
+        val nextKey = if (startIndex + limit < items.size) items[startIndex + limit].id else null
+        
+        return LoadResult.Page(data = pageItems, prevKey = null, nextKey = nextKey)
+      }
+      override fun getRefreshKey(state: androidx.paging.PagingState<Long, MediaItem>): Long? = null
     }
   }
 

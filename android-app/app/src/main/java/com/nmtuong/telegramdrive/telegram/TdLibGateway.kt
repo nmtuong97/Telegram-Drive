@@ -3,6 +3,7 @@ package com.nmtuong.telegramdrive.telegram
 import com.nmtuong.telegramdrive.domain.*
 import java.io.Closeable
 import kotlinx.coroutines.flow.StateFlow
+import androidx.paging.PagingSource
 
 interface TdLibGateway : Closeable {
   val state: StateFlow<DiagnosticsState>
@@ -14,4 +15,6 @@ interface TdLibGateway : Closeable {
   fun download(fileId: Int): ActionResult
   fun cancelDownload(fileId: Int): ActionResult
   fun preview(itemId: Long): PreviewTarget?
+  suspend fun getSavedMessagesChatId(): Long?
+  fun getChatHistoryPagingSource(chatId: Long): PagingSource<Long, MediaItem>
 }
