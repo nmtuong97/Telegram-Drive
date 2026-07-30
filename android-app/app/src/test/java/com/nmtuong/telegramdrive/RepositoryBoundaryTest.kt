@@ -11,36 +11,42 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class RepositoryBoundaryTest {
-  @Test fun gatewayCanBeStartedClosedAndReplacedWithoutUiDependency() {
-    val gateway = RecordingGateway()
-    val repository = RealTelegramRepository(gateway)
-    repository.start()
-    repository.close()
-    assertEquals(1, gateway.starts)
-    assertEquals(1, gateway.closes)
-    assertEquals(DataSourceMode.REAL, repository.diagnostics.value.dataSource)
-  }
+    @Test fun gatewayCanBeStartedClosedAndReplacedWithoutUiDependency() {
+        val gateway = RecordingGateway()
+        val repository = RealTelegramRepository(gateway)
+        repository.start()
+        repository.close()
+        assertEquals(1, gateway.starts)
+        assertEquals(1, gateway.closes)
+        assertEquals(DataSourceMode.REAL, repository.diagnostics.value.dataSource)
+    }
+
+    @Test fun repositoryCreatesPagingSourceNotGateway() {
+        // Verify PagingSource is created by repository (not gateway)
+        // Gateway no longer has getChatHistoryPagingSource
+        val gateway = RecordingGateway()
+        val repository = RealTelegramRepository(gateway)
+        val pagingSource = repository.getChatHistoryPagingSource(10L)
+        // Should not throw — repository creates it
+        assertEquals(0, gateway.starts) // Gateway was not started for this
+    }
 }
 
 private class RecordingGateway : TdLibGateway {
-  override val state: StateFlow<DiagnosticsState> =
-    MutableStateFlow(DiagnosticsState(dataSource = DataSourceMode.REAL))
-  var starts = 0
-  var closes = 0
-  override val authorization: StateFlow<AuthorizationSession> = MutableStateFlow(AuthorizationSession())
-  override val library: StateFlow<LibraryState> = MutableStateFlow(LibraryState.Idle)
-  override fun start() { starts++ }
-  override fun submit(action: AuthorizationAction) = ActionResult.ACCEPTED
-  override fun loadSavedMessages(limit: Int) = ActionResult.ACCEPTED
-  override fun download(fileId: Int) = ActionResult.ACCEPTED
-  override fun cancelDownload(fileId: Int) = ActionResult.ACCEPTED
-  override fun preview(itemId: Long): PreviewTarget? = null
-  override suspend fun getSavedMessagesChatId(): Long? = null
-  override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> {
-    return object : androidx.paging.PagingSource<Long, MediaItem>() {
-      override suspend fun load(params: LoadParams<Long>): LoadResult<Long, MediaItem> = LoadResult.Page(emptyList(), null, null)
-      override fun getRefreshKey(state: androidx.paging.PagingState<Long, MediaItem>): Long? = null
-    }
-  }
-  override fun close() { closes++ }
+    override val state: StateFlow<DiagnosticsState> =
+        MutableStateFlow(DiagnosticsState(dataSource = DataSourceMode.REAL))
+    var starts = 0
+    var closes = 0
+    override val authorization: StateFlow<AuthorizationSession> = MutableStateFlow(AuthorizationSession())
+    override val library: StateFlow<LibraryState> = MutableStateFlow(LibraryState.Idle)
+    override fun start() { starts++ }
+    override fun submit(action: AuthorizationAction) = ActionResult.ACCEPTED
+    override fun loadSavedMessages(limit: Int) = ActionResult.ACCEPTED
+    override fun download(fileId: Int) = ActionResult.ACCEPTED
+    override fun cancelDownload(fileId: Int) = ActionResult.ACCEPTED
+    override fun preview(itemId: Long): PreviewTarget? = null
+    override suspend fun getSavedMessagesChatId(): Long? = null
+    override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage =
+        HistoryPage.empty()
+    override fun close() { closes++ }
 }

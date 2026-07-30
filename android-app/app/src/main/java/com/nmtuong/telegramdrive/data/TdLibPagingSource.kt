@@ -3,61 +3,64 @@ package com.nmtuong.telegramdrive.data
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import com.nmtuong.telegramdrive.domain.MediaItem
-import com.nmtuong.telegramdrive.telegram.TdLibJsonGateway
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.*
 
+/**
+ * PagingSource for chat history backed by [TelegramRepository.loadHistoryPage].
+ *
+ * Dependency direction: Depends on [TelegramRepository] only — never on concrete TdLibJsonGateway.
+ *
+ * TDLib cursor semantics:
+ * - Key = raw TDLib message ID (not mapped MediaItem ID).
+ * - First page: key = null → fromMessageId = 0.
+ * - Subsequent pages: key = rawLastMessageId from previous HistoryPage.
+ * - Boundary message is deduplicated server-side via the raw cursor (TDLib excludes it when non-zero).
+ * - Limit is capped at 1..100 — never exceeds 100.
+ * - End of history: when HistoryPage.endOfHistory = true AND items is empty on terminal.
+ *
+ * Filtered empty pages:
+ * Infrastructure already handles scanning through text-only raw pages.
+ * If a page returns no media items but endOfHistory = false, we return an empty page
+ * with a valid nextKey so Paging can continue requesting older history.
+ */
 class TdLibPagingSource(
-  private val gateway: TdLibJsonGateway,
-  private val chatId: Long
+    private val repository: TelegramRepository,
+    private val chatId: Long,
 ) : PagingSource<Long, MediaItem>() {
 
-  override suspend fun load(params: LoadParams<Long>): LoadResult<Long, MediaItem> = withContext(Dispatchers.IO) {
-    try {
-      val fromMessageId = params.key ?: 0L
-      val limit = params.loadSize.coerceIn(1, 100)
-      val requestLimit = limit + if (fromMessageId == 0L) 0 else 1
+    override suspend fun load(params: LoadParams<Long>): LoadResult<Long, MediaItem> {
+        return try {
+            val fromMessageId = params.key ?: 0L
+            // Limit: 1..100, never exceed TDLib max
+            val limit = params.loadSize.coerceIn(1, 100)
 
-      val request = buildJsonObject {
-        put("@type", "getChatHistory")
-        put("chat_id", chatId)
-        put("from_message_id", fromMessageId)
-        put("offset", 0)
-        put("limit", requestLimit)
-        put("only_local", false)
-      }
+            val page = repository.loadHistoryPage(
+                chatId = chatId,
+                fromMessageId = fromMessageId,
+                limit = limit,
+            )
 
-      val response = gateway.execute(request)
-      if (response.string("@type") == "error") {
-        return@withContext LoadResult.Error(RuntimeException(response.string("message") ?: "Unknown error fetching history"))
-      }
+            if (page.error != null) {
+                return LoadResult.Error(RuntimeException(page.error))
+            }
 
-      val messages = response["messages"]?.jsonArray.orEmpty()
-      var items = messages.mapNotNull { 
-        gateway.mapMessageForTest(it.jsonObject.toString()) 
-      }.distinctBy { it.fileId }
+            val nextKey = when {
+                page.endOfHistory && page.items.isEmpty() -> null
+                page.rawLastMessageId != null -> page.rawLastMessageId
+                else -> null
+            }
 
-      if (fromMessageId != 0L) {
-        items = items.filter { it.id != fromMessageId }
-      }
-
-      val nextKey = if (items.isEmpty()) null else items.last().id
-
-      LoadResult.Page(
-        data = items,
-        prevKey = null, // We only page forward into the past
-        nextKey = nextKey
-      )
-    } catch (e: Exception) {
-      LoadResult.Error(e)
+            LoadResult.Page(
+                data = page.items,
+                prevKey = null, // We page backwards in time (older messages), no prevKey
+                nextKey = nextKey,
+            )
+        } catch (e: Exception) {
+            LoadResult.Error(e)
+        }
     }
-  }
 
-  override fun getRefreshKey(state: PagingState<Long, MediaItem>): Long? {
-    return null // Start from the beginning on refresh
-  }
-
-  // Helper extension to get string safely
-  private fun JsonObject.string(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull
+    override fun getRefreshKey(state: PagingState<Long, MediaItem>): Long? {
+        // On refresh, start from the beginning
+        return null
+    }
 }

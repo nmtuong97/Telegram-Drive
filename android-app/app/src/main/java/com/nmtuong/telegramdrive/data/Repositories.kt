@@ -17,189 +17,219 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 class RealTelegramRepository(private val gateway: TdLibGateway) : TelegramRepository {
-  override val diagnostics = gateway.state
-  override val authorization = gateway.authorization
-  override val library = gateway.library
-  override fun start() = gateway.start()
-  override fun submit(action: AuthorizationAction) = gateway.submit(action)
-  override fun loadSavedMessages(limit: Int) = gateway.loadSavedMessages(limit)
-  override fun download(fileId: Int) = gateway.download(fileId)
-  override fun cancelDownload(fileId: Int) = gateway.cancelDownload(fileId)
-  override fun preview(itemId: Long) = gateway.preview(itemId)
-  override suspend fun getSavedMessagesChatId(): Long? = gateway.getSavedMessagesChatId()
-  override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> = gateway.getChatHistoryPagingSource(chatId)
-  override fun close() = gateway.close()
+    override val diagnostics = gateway.state
+    override val authorization = gateway.authorization
+    override val library = gateway.library
+    override fun start() = gateway.start()
+    override fun submit(action: AuthorizationAction) = gateway.submit(action)
+    override fun loadSavedMessages(limit: Int) = gateway.loadSavedMessages(limit)
+    override fun download(fileId: Int) = gateway.download(fileId)
+    override fun cancelDownload(fileId: Int) = gateway.cancelDownload(fileId)
+    override fun preview(itemId: Long) = gateway.preview(itemId)
+    override suspend fun getSavedMessagesChatId(): Long? = gateway.getSavedMessagesChatId()
+    override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage =
+        gateway.loadHistoryPage(chatId, fromMessageId, limit)
+    override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> =
+        TdLibPagingSource(this, chatId)
+    override fun close() = gateway.close()
 }
 
 class FakeTelegramRepository(
-  val catalog: FakeTelegramCatalog,
-  private val filesDirectory: File = File(System.getProperty("java.io.tmpdir"), "telegram-drive-fake"),
-  private val videoBytes: () -> ByteArray = { ByteArray(0) },
-  dispatcher: CoroutineDispatcher = Dispatchers.Default,
-  private val downloadStepDelayMillis: Long = 150,
+    val catalog: FakeTelegramCatalog,
+    private val filesDirectory: File = File(System.getProperty("java.io.tmpdir"), "telegram-drive-fake"),
+    private val videoBytes: () -> ByteArray = { ByteArray(0) },
+    dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val downloadStepDelayMillis: Long = 150,
 ) : TelegramRepository {
-  private val lock = Any()
-  private val scope = CoroutineScope(SupervisorJob() + dispatcher)
-  private val downloadJobs = mutableMapOf<Int, Job>()
-  private val downloadGenerations = mutableMapOf<Int, Long>()
-  private val mutableDiagnostics = MutableStateFlow(
-    DiagnosticsState(
-      dataSource = DataSourceMode.FAKE,
-      lifecycle = GatewayLifecycle.RUNNING,
-      authorizationState = AuthorizationState.WaitingForPhoneNumber,
-    ),
-  )
-  override val diagnostics: StateFlow<DiagnosticsState> = mutableDiagnostics
-  private val mutableAuthorization = MutableStateFlow(AuthorizationSession(AuthorizationState.WaitingForPhoneNumber))
-  override val authorization: StateFlow<AuthorizationSession> = mutableAuthorization
-  private val mutableLibrary = MutableStateFlow<LibraryState>(LibraryState.Idle)
-  override val library: StateFlow<LibraryState> = mutableLibrary
+    private val lock = Any()
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
+    private val downloadJobs = mutableMapOf<Int, Job>()
+    private val downloadGenerations = mutableMapOf<Int, Long>()
+    private val mutableDiagnostics = MutableStateFlow(
+        DiagnosticsState(
+            dataSource = DataSourceMode.FAKE,
+            lifecycle = GatewayLifecycle.RUNNING,
+            authorizationState = AuthorizationState.WaitingForPhoneNumber,
+        ),
+    )
+    override val diagnostics: StateFlow<DiagnosticsState> = mutableDiagnostics
+    private val mutableAuthorization = MutableStateFlow(AuthorizationSession(AuthorizationState.WaitingForPhoneNumber))
+    override val authorization: StateFlow<AuthorizationSession> = mutableAuthorization
+    private val mutableLibrary = MutableStateFlow<LibraryState>(LibraryState.Idle)
+    override val library: StateFlow<LibraryState> = mutableLibrary
 
-  override fun start() = Unit
+    override fun start() = Unit
 
-  override fun submit(action: AuthorizationAction): ActionResult {
-    val next = when (action) {
-      is AuthorizationAction.SubmitPhone -> if (authorization.value.state == AuthorizationState.WaitingForPhoneNumber) AuthorizationState.WaitingForCode else null
-      is AuthorizationAction.SubmitCode -> if (authorization.value.state == AuthorizationState.WaitingForCode) AuthorizationState.WaitingForPassword("fake 2FA") else null
-      is AuthorizationAction.SubmitPassword -> if (authorization.value.state is AuthorizationState.WaitingForPassword) AuthorizationState.Ready else null
-      is AuthorizationAction.SubmitEmailAddress -> if (authorization.value.state == AuthorizationState.WaitingForEmailAddress) AuthorizationState.WaitingForEmailCode else null
-      is AuthorizationAction.SubmitEmailCode -> if (authorization.value.state == AuthorizationState.WaitingForEmailCode) AuthorizationState.Ready else null
-      AuthorizationAction.Logout -> if (authorization.value.state == AuthorizationState.Ready) AuthorizationState.Closed else null
-      AuthorizationAction.Reset -> AuthorizationState.Closed
-    } ?: return ActionResult.INVALID_STATE
-    mutableAuthorization.value = AuthorizationSession(next)
-    mutableDiagnostics.value = mutableDiagnostics.value.copy(authorizationState = next)
-    if (next != AuthorizationState.Ready) {
-      cancelDownloadsAndClearFiles()
-      mutableLibrary.value = LibraryState.Idle
-    }
-    return ActionResult.ACCEPTED
-  }
-
-  override fun loadSavedMessages(limit: Int): ActionResult {
-    if (authorization.value.state != AuthorizationState.Ready) return ActionResult.INVALID_STATE
-    val supportedKinds = setOf(MediaKind.IMAGE, MediaKind.VIDEO, MediaKind.ANIMATION, MediaKind.DOCUMENT)
-    val items = catalog.media.filter {
-      it.sourceId == catalog.sources.first { source -> source.savedMessages }.id && it.kind in supportedKinds
-    }
-      .distinctBy { it.fileId }
-      .take(limit.coerceIn(1, 50))
-      .map { it.copy(downloadState = DownloadState.NotDownloaded, localPath = null) }
-    mutableLibrary.value = if (items.isEmpty()) LibraryState.Empty else LibraryState.Content(items)
-    return ActionResult.ACCEPTED
-  }
-
-  override fun download(fileId: Int): ActionResult {
-    val content = library.value as? LibraryState.Content ?: return ActionResult.INVALID_STATE
-    val item = content.items.firstOrNull { it.fileId == fileId } ?: return ActionResult.INVALID_STATE
-    if (item.downloadState is DownloadState.Downloading) return ActionResult.DUPLICATE
-    if (item.downloadState == DownloadState.Complete && item.localPath?.let(::File)?.isFile == true) return ActionResult.DUPLICATE
-    val generation = synchronized(lock) {
-      if (downloadJobs[fileId]?.isActive == true) return ActionResult.DUPLICATE
-      (downloadGenerations[fileId] ?: 0L) + 1L
-    }
-    synchronized(lock) { downloadGenerations[fileId] = generation }
-    updateItem(fileId) { it.copy(downloadState = DownloadState.Downloading(0), localPath = null) }
-    val job = scope.launch {
-      delay(downloadStepDelayMillis)
-      if (!isCurrentDownload(fileId, generation)) return@launch
-      updateItem(fileId) { it.copy(downloadState = DownloadState.Downloading(50)) }
-      delay(downloadStepDelayMillis)
-      if (!isCurrentDownload(fileId, generation)) return@launch
-      if (item.kind == MediaKind.ANIMATION) {
-        updateItem(fileId) { it.copy(downloadState = DownloadState.Failed("Simulated download failure"), localPath = null) }
-      } else {
-        filesDirectory.mkdirs()
-        val target = File(filesDirectory, item.name)
-        when (item.kind) {
-          MediaKind.IMAGE -> target.writeBytes(FAKE_PNG)
-          MediaKind.VIDEO -> target.writeBytes(videoBytes())
-          else -> target.writeBytes(ByteArray(0))
+    override fun submit(action: AuthorizationAction): ActionResult {
+        val next = when (action) {
+            is AuthorizationAction.SubmitPhone -> if (authorization.value.state == AuthorizationState.WaitingForPhoneNumber) AuthorizationState.WaitingForCode else null
+            is AuthorizationAction.SubmitCode -> if (authorization.value.state == AuthorizationState.WaitingForCode) AuthorizationState.WaitingForPassword("fake 2FA") else null
+            is AuthorizationAction.SubmitPassword -> if (authorization.value.state is AuthorizationState.WaitingForPassword) AuthorizationState.Ready else null
+            is AuthorizationAction.SubmitEmailAddress -> if (authorization.value.state == AuthorizationState.WaitingForEmailAddress) AuthorizationState.WaitingForEmailCode else null
+            is AuthorizationAction.SubmitEmailCode -> if (authorization.value.state == AuthorizationState.WaitingForEmailCode) AuthorizationState.Ready else null
+            AuthorizationAction.Logout -> if (authorization.value.state == AuthorizationState.Ready) AuthorizationState.Closed else null
+            AuthorizationAction.Reset -> AuthorizationState.Closed
+        } ?: return ActionResult.INVALID_STATE
+        mutableAuthorization.value = AuthorizationSession(next)
+        mutableDiagnostics.value = mutableDiagnostics.value.copy(authorizationState = next)
+        if (next != AuthorizationState.Ready) {
+            cancelDownloadsAndClearFiles()
+            mutableLibrary.value = LibraryState.Idle
         }
-        if (isCurrentDownload(fileId, generation)) {
-          updateItem(fileId) { it.copy(downloadState = DownloadState.Complete, localPath = target.absolutePath) }
-        }
-      }
-      synchronized(lock) { downloadJobs.remove(fileId) }
+        return ActionResult.ACCEPTED
     }
-    synchronized(lock) { downloadJobs[fileId] = job }
-    return ActionResult.ACCEPTED
-  }
 
-  override fun cancelDownload(fileId: Int): ActionResult {
-    val item = (library.value as? LibraryState.Content)?.items?.firstOrNull { it.fileId == fileId }
-      ?: return ActionResult.INVALID_STATE
-    if (item.downloadState !is DownloadState.Downloading) return ActionResult.INVALID_STATE
-    synchronized(lock) {
-      downloadGenerations[fileId] = (downloadGenerations[fileId] ?: 0L) + 1L
-      downloadJobs.remove(fileId)?.cancel()
-    }
-    updateItem(fileId) { it.copy(downloadState = DownloadState.Canceled, localPath = null) }
-    return ActionResult.ACCEPTED
-  }
-
-  override fun preview(itemId: Long): PreviewTarget? {
-    val item = (library.value as? LibraryState.Content)?.items?.firstOrNull { it.id == itemId } ?: return null
-    val path = item.localPath?.takeIf { File(it).isFile } ?: return null
-    return when (item.kind) {
-      MediaKind.IMAGE -> PreviewTarget.Image(item.id, path)
-      MediaKind.VIDEO -> PreviewTarget.Video(item.id, path)
-      else -> null
-    }
-  }
-
-  override suspend fun getSavedMessagesChatId(): Long? {
-    return catalog.sources.firstOrNull { it.savedMessages }?.id
-  }
-
-  override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> {
-    return object : androidx.paging.PagingSource<Long, MediaItem>() {
-      override suspend fun load(params: LoadParams<Long>): LoadResult<Long, MediaItem> {
+    override fun loadSavedMessages(limit: Int): ActionResult {
+        if (authorization.value.state != AuthorizationState.Ready) return ActionResult.INVALID_STATE
         val supportedKinds = setOf(MediaKind.IMAGE, MediaKind.VIDEO, MediaKind.ANIMATION, MediaKind.DOCUMENT)
         val items = catalog.media.filter {
-          it.sourceId == chatId && it.kind in supportedKinds
-        }.sortedByDescending { it.id }
-        
-        val startIndex = params.key?.let { key -> items.indexOfFirst { it.id == key } } ?: 0
-        if (startIndex < 0) return LoadResult.Error(IllegalArgumentException("Invalid key"))
-        
-        val limit = params.loadSize
-        val pageItems = items.drop(startIndex).take(limit).map { it.copy(downloadState = DownloadState.NotDownloaded, localPath = null) }
-        val nextKey = if (startIndex + limit < items.size) items[startIndex + limit].id else null
-        
-        return LoadResult.Page(data = pageItems, prevKey = null, nextKey = nextKey)
-      }
-      override fun getRefreshKey(state: androidx.paging.PagingState<Long, MediaItem>): Long? = null
+            it.sourceId == catalog.sources.first { source -> source.savedMessages }.id && it.kind in supportedKinds
+        }
+            .distinctBy { it.fileId }
+            .take(limit.coerceIn(1, 50))
+            .map { it.copy(downloadState = DownloadState.NotDownloaded, localPath = null) }
+        mutableLibrary.value = if (items.isEmpty()) LibraryState.Empty else LibraryState.Content(items)
+        return ActionResult.ACCEPTED
     }
-  }
 
-  override fun close() {
-    synchronized(lock) { downloadJobs.values.forEach(Job::cancel); downloadJobs.clear() }
-    scope.cancel()
-  }
-
-  private fun isCurrentDownload(fileId: Int, generation: Long): Boolean =
-    synchronized(lock) { downloadGenerations[fileId] == generation }
-
-  private fun updateItem(fileId: Int, transform: (MediaItem) -> MediaItem) {
-    synchronized(lock) {
-      val content = mutableLibrary.value as? LibraryState.Content ?: return
-      mutableLibrary.value = LibraryState.Content(content.items.map { if (it.fileId == fileId) transform(it) else it })
+    override fun download(fileId: Int): ActionResult {
+        val content = library.value as? LibraryState.Content ?: return ActionResult.INVALID_STATE
+        val item = content.items.firstOrNull { it.fileId == fileId } ?: return ActionResult.INVALID_STATE
+        if (item.downloadState is DownloadState.Downloading) return ActionResult.DUPLICATE
+        if (item.downloadState == DownloadState.Complete && item.localPath?.let(::File)?.isFile == true) return ActionResult.DUPLICATE
+        val generation = synchronized(lock) {
+            if (downloadJobs[fileId]?.isActive == true) return ActionResult.DUPLICATE
+            (downloadGenerations[fileId] ?: 0L) + 1L
+        }
+        synchronized(lock) { downloadGenerations[fileId] = generation }
+        updateItem(fileId) { it.copy(downloadState = DownloadState.Downloading(0), localPath = null) }
+        val job = scope.launch {
+            delay(downloadStepDelayMillis)
+            if (!isCurrentDownload(fileId, generation)) return@launch
+            updateItem(fileId) { it.copy(downloadState = DownloadState.Downloading(50)) }
+            delay(downloadStepDelayMillis)
+            if (!isCurrentDownload(fileId, generation)) return@launch
+            if (item.kind == MediaKind.ANIMATION) {
+                updateItem(fileId) { it.copy(downloadState = DownloadState.Failed("Simulated download failure"), localPath = null) }
+            } else {
+                filesDirectory.mkdirs()
+                val target = File(filesDirectory, item.name)
+                when (item.kind) {
+                    MediaKind.IMAGE -> target.writeBytes(FAKE_PNG)
+                    MediaKind.VIDEO -> target.writeBytes(videoBytes())
+                    else -> target.writeBytes(ByteArray(0))
+                }
+                if (isCurrentDownload(fileId, generation)) {
+                    updateItem(fileId) { it.copy(downloadState = DownloadState.Complete, localPath = target.absolutePath) }
+                }
+            }
+            synchronized(lock) { downloadJobs.remove(fileId) }
+        }
+        synchronized(lock) { downloadJobs[fileId] = job }
+        return ActionResult.ACCEPTED
     }
-  }
 
-  private fun cancelDownloadsAndClearFiles() {
-    synchronized(lock) {
-      downloadJobs.values.forEach(Job::cancel)
-      downloadJobs.clear()
-      downloadGenerations.replaceAll { _, generation -> generation + 1L }
+    override fun cancelDownload(fileId: Int): ActionResult {
+        val item = (library.value as? LibraryState.Content)?.items?.firstOrNull { it.fileId == fileId }
+            ?: return ActionResult.INVALID_STATE
+        if (item.downloadState !is DownloadState.Downloading) return ActionResult.INVALID_STATE
+        synchronized(lock) {
+            downloadGenerations[fileId] = (downloadGenerations[fileId] ?: 0L) + 1L
+            downloadJobs.remove(fileId)?.cancel()
+        }
+        updateItem(fileId) { it.copy(downloadState = DownloadState.Canceled, localPath = null) }
+        return ActionResult.ACCEPTED
     }
-    filesDirectory.deleteRecursively()
-  }
 
-  private companion object {
-    val FAKE_PNG: ByteArray = Base64.getDecoder().decode(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-    )
-  }
+    override fun preview(itemId: Long): PreviewTarget? {
+        val item = (library.value as? LibraryState.Content)?.items?.firstOrNull { it.id == itemId } ?: return null
+        val path = item.localPath?.takeIf { File(it).isFile } ?: return null
+        return when (item.kind) {
+            MediaKind.IMAGE -> PreviewTarget.Image(item.id, path)
+            MediaKind.VIDEO -> PreviewTarget.Video(item.id, path)
+            else -> null
+        }
+    }
+
+    override suspend fun getSavedMessagesChatId(): Long? {
+        return catalog.sources.firstOrNull { it.savedMessages }?.id
+    }
+
+    /**
+     * Fake loadHistoryPage — same semantics as real paging:
+     * - fromMessageId=0 means first page (most recent messages).
+     * - Key is the raw message ID (same meaning as real paging).
+     * - Supported media only; boundary handled by fromMessageId dedup.
+     * - endOfHistory=true when no more older messages.
+     * - Same ordering: descending by ID (most recent first).
+     * - Same supported media rules as real mapping.
+     */
+    override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage {
+        val safeLimit = limit.coerceIn(1, 100)
+        val supportedKinds = setOf(MediaKind.IMAGE, MediaKind.VIDEO, MediaKind.ANIMATION, MediaKind.DOCUMENT)
+        val allItems = catalog.media
+            .filter { it.sourceId == chatId && it.kind in supportedKinds }
+            .sortedByDescending { it.id } // Most recent first — same as TDLib getChatHistory
+
+        // Find starting position (boundary dedup: exclude fromMessageId)
+        val startIndex = if (fromMessageId == 0L) {
+            0
+        } else {
+            val idx = allItems.indexOfFirst { it.id == fromMessageId }
+            if (idx < 0) return HistoryPage.error("Invalid cursor")
+            idx + 1 // Exclude the boundary message
+        }
+
+        if (startIndex >= allItems.size) {
+            return HistoryPage.empty()
+        }
+
+        val pageItems = allItems
+            .drop(startIndex)
+            .take(safeLimit)
+            .map { it.copy(downloadState = DownloadState.NotDownloaded, localPath = null) }
+
+        val endOfHistory = (startIndex + safeLimit) >= allItems.size
+        val rawLastMessageId = pageItems.lastOrNull()?.id
+
+        return HistoryPage(
+            items = pageItems,
+            rawLastMessageId = rawLastMessageId,
+            endOfHistory = endOfHistory,
+        )
+    }
+
+    override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> {
+        return TdLibPagingSource(this, chatId)
+    }
+
+    override fun close() {
+        synchronized(lock) { downloadJobs.values.forEach(Job::cancel); downloadJobs.clear() }
+        scope.cancel()
+    }
+
+    private fun isCurrentDownload(fileId: Int, generation: Long): Boolean =
+        synchronized(lock) { downloadGenerations[fileId] == generation }
+
+    private fun updateItem(fileId: Int, transform: (MediaItem) -> MediaItem) {
+        synchronized(lock) {
+            val content = mutableLibrary.value as? LibraryState.Content ?: return
+            mutableLibrary.value = LibraryState.Content(content.items.map { if (it.fileId == fileId) transform(it) else it })
+        }
+    }
+
+    private fun cancelDownloadsAndClearFiles() {
+        synchronized(lock) {
+            downloadJobs.values.forEach(Job::cancel)
+            downloadJobs.clear()
+            downloadGenerations.replaceAll { _, generation -> generation + 1L }
+        }
+        filesDirectory.deleteRecursively()
+    }
+
+    private companion object {
+        val FAKE_PNG: ByteArray = Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        )
+    }
 }

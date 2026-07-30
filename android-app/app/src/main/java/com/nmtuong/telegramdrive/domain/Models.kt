@@ -58,6 +58,7 @@ sealed interface DownloadState {
   data object Complete : DownloadState
   data object Canceled : DownloadState
   data class Failed(val reason: String) : DownloadState
+  data object Unavailable : DownloadState
 }
 data class MediaItem(
   val id: Long,
@@ -84,4 +85,55 @@ sealed interface PreviewTarget {
   data class Video(val itemId: Long, val path: String) : PreviewTarget
   data class Audio(val itemId: Long, val path: String) : PreviewTarget
   data class Pdf(val itemId: Long, val path: String) : PreviewTarget
+}
+
+/**
+ * Raw paging result returned by infrastructure layer.
+ * Repository creates PagingSource from this; UI never sees infrastructure directly.
+ */
+data class HistoryPage(
+  val items: List<MediaItem>,
+  /** Raw TDLib last message ID — used as cursor for next page. Null when end of history. */
+  val rawLastMessageId: Long?,
+  /** True when TDLib confirmed no older messages exist in this history. */
+  val endOfHistory: Boolean,
+  val error: String? = null,
+) {
+  companion object {
+    fun error(message: String) = HistoryPage(emptyList(), null, true, message)
+    fun empty() = HistoryPage(emptyList(), null, true)
+  }
+}
+
+/**
+ * Identifies a transfer within an account/session scope.
+ * raw TDLib file ID alone is not a global identity.
+ */
+data class TransferIdentity(
+  val accountId: Long,
+  val databaseGeneration: Long,
+  val fileId: Int,
+)
+
+/** Terminal and non-terminal states for a coordinated transfer. */
+sealed interface TransferState {
+  data object NotStarted : TransferState
+  data object Queued : TransferState
+  data class InProgress(val percent: Int) : TransferState
+  data object Completed : TransferState
+  data class TransferFailed(val reason: String) : TransferState
+  data object TransferCancelled : TransferState
+  data object Unavailable : TransferState
+
+  val isTerminal: Boolean
+    get() = this is Completed || this is TransferFailed || this is TransferCancelled || this is Unavailable
+}
+
+/** Result of an explicit account reset/logout operation. */
+sealed interface AccountResetResult {
+  data object Completed : AccountResetResult
+  data class Failed(val reason: String) : AccountResetResult
+  data object Cancelled : AccountResetResult
+  data object AlreadyRunning : AccountResetResult
+  data object InvalidState : AccountResetResult
 }

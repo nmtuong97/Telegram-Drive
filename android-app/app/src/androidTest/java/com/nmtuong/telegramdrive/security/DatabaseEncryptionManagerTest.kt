@@ -8,59 +8,150 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
+/**
+ * Instrumented tests for [DatabaseEncryptionManager] — requires Android Keystore.
+ * Run with: ./gradlew connectedDebugAndroidTest
+ */
 @RunWith(AndroidJUnit4::class)
 class DatabaseEncryptionManagerTest {
 
-    private lateinit var encryptionManager: DatabaseEncryptionManager
+    private lateinit var manager: DatabaseEncryptionManager
 
     @Before
     fun setUp() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        encryptionManager = DatabaseEncryptionManager(context)
-        encryptionManager.clearKey()
+        manager = DatabaseEncryptionManager(context)
+        // Clean slate for each test
+        runCatching { manager.clearKey() }
     }
 
     @After
     fun tearDown() {
-        encryptionManager.clearKey()
+        runCatching { manager.clearKey() }
     }
 
-    @Test
-    fun testGenerateAndRetrieveKey() {
-        // Generate for the first time
-        val key1 = encryptionManager.getOrGenerateKey()
-        assertNotNull(key1)
-        assertTrue(key1.isNotEmpty())
+    // ── First creation ────────────────────────────────────────────────────────
 
-        // Retrieve again should return the same key
-        val key2 = encryptionManager.getOrGenerateKey()
-        assertEquals("Key should remain identical upon subsequent fetches", key1, key2)
+    @Test
+    fun `first getOrGenerateKey creates and persists a non-empty key`() {
+        val key = manager.getOrGenerateKey()
+        assertNotNull(key)
+        assertTrue(key.isNotEmpty())
     }
 
-    @Test
-    fun testClearKey() {
-        val key1 = encryptionManager.getOrGenerateKey()
-        
-        encryptionManager.clearKey()
+    // ── Reuse ─────────────────────────────────────────────────────────────────
 
-        val key2 = encryptionManager.getOrGenerateKey()
-        assertNotEquals("A new key should be generated after clearing", key1, key2)
+    @Test
+    fun `subsequent getOrGenerateKey returns same key`() {
+        val key1 = manager.getOrGenerateKey()
+        val key2 = manager.getOrGenerateKey()
+        assertEquals("Key should be stable across calls", key1, key2)
     }
 
+    // ── Clear and regenerate ──────────────────────────────────────────────────
+
     @Test
-    fun testMissingKeyStoreKey() {
-        val key1 = encryptionManager.getOrGenerateKey()
-        
-        // Simulate KeyStore deletion
-        val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore")
-        keyStore.load(null)
-        keyStore.deleteEntry("TelegramDriveDatabaseKeyAlias")
+    fun `clearKey then getOrGenerateKey produces different key`() {
+        val key1 = manager.getOrGenerateKey()
+        manager.clearKey()
+        val key2 = manager.getOrGenerateKey()
+        assertNotEquals("New key must differ after clear", key1, key2)
+    }
+
+    // ── Missing Keystore alias ────────────────────────────────────────────────
+
+    @Test
+    fun `missing Keystore alias throws DatabaseKeyException`() {
+        manager.getOrGenerateKey() // Generate record
+
+        // Manually delete Keystore entry
+        val ks = java.security.KeyStore.getInstance("AndroidKeyStore")
+        ks.load(null)
+        if (ks.containsAlias(DatabaseEncryptionManager.DEFAULT_KEY_ALIAS)) {
+            ks.deleteEntry(DatabaseEncryptionManager.DEFAULT_KEY_ALIAS)
+        }
 
         try {
-            encryptionManager.getOrGenerateKey()
-            fail("Expected IllegalStateException due to missing keystore key")
-        } catch (e: IllegalStateException) {
-            // Expected
+            manager.getOrGenerateKey()
+            fail("Expected DatabaseKeyException")
+        } catch (e: DatabaseKeyException) {
+            // Expected — message should not contain key material
+            assertFalse(e.message.orEmpty().contains("key="))
+            assertFalse(e.message.orEmpty().contains("cipher"))
+            assertTrue(e.message.orEmpty().isNotBlank())
         }
+    }
+
+    // ── Clear clears both record and Keystore ─────────────────────────────────
+
+    @Test
+    fun `clearKey removes Keystore alias`() {
+        manager.getOrGenerateKey()
+        manager.clearKey()
+
+        val ks = java.security.KeyStore.getInstance("AndroidKeyStore")
+        ks.load(null)
+        assertFalse(
+            "Keystore alias should be removed after clear",
+            ks.containsAlias(DatabaseEncryptionManager.DEFAULT_KEY_ALIAS)
+        )
+    }
+
+    // ── Corrupt record ────────────────────────────────────────────────────────
+
+    @Test
+    fun `corrupt ciphertext record throws DatabaseKeyException`() {
+        manager.getOrGenerateKey() // Generate valid record
+
+        // Corrupt the stored record
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val prefs = context.getSharedPreferences("tdlib_encryption_v3", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putString("encryption_record_v1", "1|CORRUPTCIPHERTEXT|CORRUPTIV|${DatabaseEncryptionManager.DEFAULT_KEY_ALIAS}").commit()
+
+        try {
+            manager.getOrGenerateKey()
+            fail("Expected DatabaseKeyException for corrupt ciphertext")
+        } catch (e: DatabaseKeyException) {
+            assertTrue(e.message.orEmpty().isNotBlank())
+            // Message should not leak key material
+            assertFalse(e.message.orEmpty().contains("key="))
+        }
+    }
+
+    // ── Manager recreation (process restart simulation) ────────────────────────
+
+    @Test
+    fun `manager recreated after persist returns same key (process restart simulation)`() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val key1 = manager.getOrGenerateKey()
+
+        // Simulate process restart by creating new manager instance
+        val manager2 = DatabaseEncryptionManager(context)
+        val key2 = manager2.getOrGenerateKey()
+
+        assertEquals("Key should persist across manager recreations", key1, key2)
+    }
+
+    // ── Error message safety ──────────────────────────────────────────────────
+
+    @Test
+    fun `DatabaseKeyException message does not expose key material or ciphertext`() {
+        manager.getOrGenerateKey()
+        val ks = java.security.KeyStore.getInstance("AndroidKeyStore")
+        ks.load(null)
+        ks.deleteEntry(DatabaseEncryptionManager.DEFAULT_KEY_ALIAS)
+
+        val e = try {
+            manager.getOrGenerateKey()
+            null
+        } catch (e: DatabaseKeyException) {
+            e
+        }
+
+        assertNotNull(e)
+        // Must not contain raw key material indicators
+        assertFalse(e!!.message.orEmpty().contains("key="))
+        assertFalse(e.message.orEmpty().contains("cipher"))
+        assertFalse(e.message.orEmpty().contains("iv="))
     }
 }
