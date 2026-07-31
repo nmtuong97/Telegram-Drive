@@ -22,11 +22,13 @@ class RealTelegramRepository(private val gateway: TdLibGateway) : TelegramReposi
     override val library = gateway.library
     override fun start() = gateway.start()
     override fun submit(action: AuthorizationAction) = gateway.submit(action)
+    override suspend fun logoutAndReset(): AccountResetResult = gateway.logoutAndReset()
     override fun loadSavedMessages(limit: Int) = gateway.loadSavedMessages(limit)
     override fun download(fileId: Int) = gateway.download(fileId)
     override fun cancelDownload(fileId: Int) = gateway.cancelDownload(fileId)
     override fun preview(itemId: Long) = gateway.preview(itemId)
     override suspend fun getSavedMessagesChatId(): Long? = gateway.getSavedMessagesChatId()
+    override suspend fun getAvailableSources(): List<FileSource> = gateway.getAvailableSources()
     override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage =
         gateway.loadHistoryPage(chatId, fromMessageId, limit)
     override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> =
@@ -77,6 +79,14 @@ class FakeTelegramRepository(
             mutableLibrary.value = LibraryState.Idle
         }
         return ActionResult.ACCEPTED
+    }
+
+    override suspend fun logoutAndReset(): AccountResetResult {
+        cancelDownloadsAndClearFiles()
+        mutableAuthorization.value = AuthorizationSession(AuthorizationState.Closed)
+        mutableDiagnostics.value = mutableDiagnostics.value.copy(authorizationState = AuthorizationState.Closed)
+        mutableLibrary.value = LibraryState.Idle
+        return AccountResetResult.Completed
     }
 
     override fun loadSavedMessages(limit: Int): ActionResult {
@@ -155,6 +165,8 @@ class FakeTelegramRepository(
         return catalog.sources.firstOrNull { it.savedMessages }?.id
     }
 
+    override suspend fun getAvailableSources(): List<FileSource> = catalog.sources
+
     /**
      * Fake loadHistoryPage — same semantics as real paging:
      * - fromMessageId=0 means first page (most recent messages).
@@ -166,36 +178,59 @@ class FakeTelegramRepository(
      */
     override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage {
         val safeLimit = limit.coerceIn(1, 100)
-        val supportedKinds = setOf(MediaKind.IMAGE, MediaKind.VIDEO, MediaKind.ANIMATION, MediaKind.DOCUMENT)
-        val allItems = catalog.media
-            .filter { it.sourceId == chatId && it.kind in supportedKinds }
-            .sortedByDescending { it.id } // Most recent first — same as TDLib getChatHistory
+        var cursor = fromMessageId
+        var scanCount = 0
 
-        // Find starting position (boundary dedup: exclude fromMessageId)
-        val startIndex = if (fromMessageId == 0L) {
-            0
+        val rawList = if (catalog.rawMessages.isNotEmpty()) {
+            catalog.rawMessages.filter { it.sourceId == chatId }
         } else {
-            val idx = allItems.indexOfFirst { it.id == fromMessageId }
-            if (idx < 0) return HistoryPage.error("Invalid cursor")
-            idx + 1 // Exclude the boundary message
+            catalog.media.filter { it.sourceId == chatId }.map { com.nmtuong.telegramdrive.data.fake.FakeRawMessage(it.id, it.sourceId, mediaItem = it) }
         }
 
-        if (startIndex >= allItems.size) {
-            return HistoryPage.empty()
+        val allSorted = rawList.sortedByDescending { it.id }
+
+        while (scanCount < 10) {
+            val startIndex = if (cursor == 0L) {
+                0
+            } else {
+                val idx = allSorted.indexOfFirst { it.id == cursor }
+                if (idx < 0) return HistoryPage.error("Invalid cursor")
+                idx + 1
+            }
+
+            if (startIndex >= allSorted.size) {
+                return HistoryPage.empty()
+            }
+
+            val rawPage = allSorted.drop(startIndex).take(safeLimit)
+            val endOfHistory = (startIndex + rawPage.size) >= allSorted.size
+            val rawLastMessageId = rawPage.lastOrNull()?.id
+
+            val supportedKinds = setOf(MediaKind.IMAGE, MediaKind.VIDEO, MediaKind.ANIMATION, MediaKind.DOCUMENT)
+            val mappedItems = rawPage.mapNotNull { rawMsg ->
+                rawMsg.mediaItem?.takeIf { it.kind in supportedKinds }?.copy(downloadState = DownloadState.NotDownloaded, localPath = null)
+            }
+
+            if (mappedItems.isNotEmpty()) {
+                return HistoryPage(
+                    items = mappedItems,
+                    rawLastMessageId = rawLastMessageId,
+                    endOfHistory = endOfHistory,
+                )
+            }
+
+            if (endOfHistory || rawLastMessageId == null || rawLastMessageId == cursor) {
+                return HistoryPage.empty()
+            }
+
+            cursor = rawLastMessageId
+            scanCount++
         }
-
-        val pageItems = allItems
-            .drop(startIndex)
-            .take(safeLimit)
-            .map { it.copy(downloadState = DownloadState.NotDownloaded, localPath = null) }
-
-        val endOfHistory = (startIndex + safeLimit) >= allItems.size
-        val rawLastMessageId = pageItems.lastOrNull()?.id
 
         return HistoryPage(
-            items = pageItems,
-            rawLastMessageId = rawLastMessageId,
-            endOfHistory = endOfHistory,
+            items = emptyList(),
+            rawLastMessageId = cursor.takeIf { it != fromMessageId },
+            endOfHistory = false,
         )
     }
 

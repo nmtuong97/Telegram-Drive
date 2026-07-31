@@ -28,11 +28,13 @@ class TdLibPagingSourceTest {
 
         override fun start() {}
         override fun submit(action: AuthorizationAction) = ActionResult.ACCEPTED
+        override suspend fun logoutAndReset(): AccountResetResult = AccountResetResult.Completed
         override fun loadSavedMessages(limit: Int) = ActionResult.ACCEPTED
         override fun download(fileId: Int) = ActionResult.ACCEPTED
         override fun cancelDownload(fileId: Int) = ActionResult.ACCEPTED
         override fun preview(itemId: Long): PreviewTarget? = null
         override suspend fun getSavedMessagesChatId(): Long? = 10L
+        override suspend fun getAvailableSources(): List<FileSource> = listOf(FileSource(10L, "Saved Messages", true))
         override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> =
             TdLibPagingSource(this, chatId)
         override fun close() {}
@@ -155,8 +157,8 @@ class TdLibPagingSourceTest {
         assertTrue(result is PagingSource.LoadResult.Page)
         val page = result as PagingSource.LoadResult.Page
         assertEquals(1, page.data.size)
-        // rawLastMessageId is set, so nextKey = rawLastMessageId
-        assertEquals(500L, page.nextKey)
+        // Terminal page with items has nextKey == null
+        assertNull(page.nextKey)
     }
 
     // ── Filtered empty page ──────────────────────────────────────────────────

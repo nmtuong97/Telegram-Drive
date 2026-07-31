@@ -44,8 +44,8 @@ class TdLibPagingSource(
             }
 
             val nextKey = when {
-                page.endOfHistory && page.items.isEmpty() -> null
-                page.rawLastMessageId != null -> page.rawLastMessageId
+                page.endOfHistory -> null
+                page.rawLastMessageId != null && page.rawLastMessageId != fromMessageId -> page.rawLastMessageId
                 else -> null
             }
 

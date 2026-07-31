@@ -4,8 +4,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 /**
- * Unit tests for [EncryptionRecord] — atomic versioned record format.
- * No Android dependencies required.
+ * Unit tests for [EncryptionRecord] & [EncryptionStorageResult].
  */
 class EncryptionRecordTest {
 
@@ -18,40 +17,55 @@ class EncryptionRecordTest {
             keyAlias = "TestAlias",
         )
         val serialized = record.serialize()
-        val parsed = EncryptionRecord.parse(serialized)
+        val parsedResult = EncryptionRecord.parse(serialized)
 
-        assertNotNull(parsed)
-        assertEquals(record.schemaVersion, parsed!!.schemaVersion)
+        assertTrue(parsedResult is EncryptionStorageResult.Valid)
+        val parsed = (parsedResult as EncryptionStorageResult.Valid).record
+
+        assertEquals(record.schemaVersion, parsed.schemaVersion)
         assertEquals(record.ciphertextBase64, parsed.ciphertextBase64)
         assertEquals(record.ivBase64, parsed.ivBase64)
         assertEquals(record.keyAlias, parsed.keyAlias)
     }
 
     @Test
-    fun `parse returns null for empty string`() {
-        assertNull(EncryptionRecord.parse(""))
+    fun `parse returns Missing for empty string`() {
+        assertEquals(EncryptionStorageResult.Missing, EncryptionRecord.parse(""))
     }
 
     @Test
-    fun `parse returns null for too few segments`() {
-        assertNull(EncryptionRecord.parse("1|ciphertext|iv"))
+    fun `parse returns Corrupt for too few segments`() {
+        val result = EncryptionRecord.parse("1|ciphertext|iv")
+        assertTrue(result is EncryptionStorageResult.Corrupt)
     }
 
     @Test
-    fun `parse returns null for non-integer version`() {
-        assertNull(EncryptionRecord.parse("notanint|cipher|iv|alias"))
+    fun `parse returns Corrupt for non-integer version`() {
+        val result = EncryptionRecord.parse("notanint|cipher|iv|alias")
+        assertTrue(result is EncryptionStorageResult.Corrupt)
     }
 
     @Test
-    fun `parse returns null for too many segments when separator appears in fields`() {
-        // If a field contains separator, parse should handle gracefully
+    fun `parse returns Corrupt for too many segments`() {
         val result = EncryptionRecord.parse("1|cipher|iv|alias|extra")
-        // With split("|"), this gives 5 parts — should return null (size != 4)
-        assertNull(result)
+        assertTrue(result is EncryptionStorageResult.Corrupt)
     }
 
     @Test
-    fun `serialize output does not contain key material in plain text`() {
+    fun `parse returns UnsupportedVersion for future schema version`() {
+        val result = EncryptionRecord.parse("999|cipher|iv|alias")
+        assertTrue(result is EncryptionStorageResult.UnsupportedVersion)
+        assertEquals(999, (result as EncryptionStorageResult.UnsupportedVersion).version)
+    }
+
+    @Test
+    fun `parse returns LegacyDetected for schema version zero`() {
+        val result = EncryptionRecord.parse("0|cipher|iv|alias")
+        assertTrue(result is EncryptionStorageResult.LegacyDetected)
+    }
+
+    @Test
+    fun `serialize output does not contain plaintext key material`() {
         val record = EncryptionRecord(
             schemaVersion = 1,
             ciphertextBase64 = "ENCRYPTEDDATA",
@@ -59,8 +73,6 @@ class EncryptionRecordTest {
             keyAlias = "Alias",
         )
         val serialized = record.serialize()
-        // The string should contain the b64 ciphertext and iv (intentional)
-        // but no plaintext "secret" or similar
         assertFalse(serialized.contains("secret"))
         assertFalse(serialized.contains("password"))
     }
@@ -70,7 +82,6 @@ class EncryptionRecordTest {
         val exception = DatabaseKeyException("Decryption failed. Account reset required.")
         assertFalse(exception.message!!.contains("key="))
         assertFalse(exception.message!!.contains("cipher"))
-        // Message should describe recovery action
         assertTrue(exception.message!!.contains("reset") || exception.message!!.contains("required"))
     }
 }

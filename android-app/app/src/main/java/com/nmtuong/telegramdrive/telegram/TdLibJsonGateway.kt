@@ -146,9 +146,9 @@ class TdLibJsonGateway internal constructor(
             }
         }
 
-        // Do not handle authorization/file updates after CLOSED
+        // Do not handle authorization/file updates after CLOSED or ABORTED
         val currentLifecycle = synchronized(lock) { lifecycle }
-        if (currentLifecycle == GatewayLifecycle.CLOSED) return
+        if (currentLifecycle == GatewayLifecycle.CLOSED || currentLifecycle == GatewayLifecycle.ABORTED) return
 
         when (type) {
             "updateAuthorizationState" -> handleAuthorization(root.obj("authorization_state") ?: return)
@@ -235,14 +235,16 @@ class TdLibJsonGateway internal constructor(
             mutableAuthorization.value = AuthorizationSession(state = AuthorizationState.MissingConfiguration)
             return
         }
-        databaseDirectory.mkdirs()
-        filesDirectory.mkdirs()
+        val dbExists = databaseDirectory.exists() && (databaseDirectory.list()?.isNotEmpty() == true)
+        val key = encryptionManager?.getOrGenerateKey(
+            com.nmtuong.telegramdrive.security.DatabaseState(exists = dbExists)
+        ) ?: ""
         val request = requestEnvelope("parameters", buildJsonObject {
             put("@type", "setTdlibParameters")
             put("use_test_dc", false)
             put("database_directory", databaseDirectory.absolutePath)
             put("files_directory", filesDirectory.absolutePath)
-            put("database_encryption_key", encryptionManager?.getOrGenerateKey() ?: "")
+            put("database_encryption_key", key)
             put("use_file_database", true)
             put("use_chat_info_database", true)
             put("use_message_database", true)
@@ -305,73 +307,86 @@ class TdLibJsonGateway internal constructor(
      *
      * If logOut times out: returns Failed (recoverable). Local data is NOT deleted.
      */
-    suspend fun logoutAndReset(): AccountResetResult {
-        synchronized(lock) {
-            if (lifecycle == GatewayLifecycle.CLOSING || lifecycle == GatewayLifecycle.CLOSED) {
+    override suspend fun logoutAndReset(): AccountResetResult {
+        val job = synchronized(lock) {
+            if (lifecycle == GatewayLifecycle.CLOSING || lifecycle == GatewayLifecycle.CLOSED || lifecycle == GatewayLifecycle.ABORTED) {
                 return AccountResetResult.InvalidState
             }
             if (resetJob?.isActive == true) return AccountResetResult.AlreadyRunning
-        }
 
-        val job = scope.launch {
-            try {
-                // Step 1: Cancel all active downloads
-                synchronized(lock) {
-                    pendingDownloads.clear()
-                    pendingCancellations.clear()
-                    pendingDownloadRequests.clear()
-                    pendingCancelRequests.clear()
-                }
-
-                // Step 2: Send logOut (network required)
-                val logoutResult = runCatching {
-                    withTimeout(LOGOUT_TIMEOUT_MS) {
-                        execute(buildJsonObject { put("@type", "logOut") })
+            val launchedJob = scope.launch {
+                try {
+                    // Step 1: Cancel active TDLib downloads
+                    val activeFileIds = synchronized(lock) {
+                        val ids = pendingDownloads.toList()
+                        pendingDownloads.clear()
+                        pendingCancellations.clear()
+                        pendingDownloadRequests.clear()
+                        pendingCancelRequests.clear()
+                        ids
                     }
-                }
-
-                if (logoutResult.isFailure) {
-                    val cause = logoutResult.exceptionOrNull()
-                    val reason = when (cause) {
-                        is TimeoutCancellationException -> "Logout timed out. Network may be unavailable."
-                        else -> SensitiveDataRedactor.redact(cause?.message ?: "Logout failed")
+                    activeFileIds.forEach { fileId ->
+                        runCatching { cancelDownload(fileId) }
                     }
-                    // Do NOT delete local data on logout failure
-                    mutableResetResult.value = AccountResetResult.Failed(reason)
-                    return@launch
-                }
 
-                // Step 3: Wait for TDLib to confirm authorizationStateClosed
-                // (logOut triggers the closing sequence; authorizationStateClosed is the terminal signal)
-                val closeResult = runCatching {
-                    withTimeout(CLOSE_TIMEOUT_MS) {
-                        authorization.first { it.state == AuthorizationState.Closed }
+                    // Step 2: Send logOut (network required)
+                    val logoutResult = runCatching {
+                        withTimeout(LOGOUT_TIMEOUT_MS) {
+                            execute(buildJsonObject { put("@type", "logOut") })
+                        }
                     }
+
+                    if (logoutResult.isFailure) {
+                        val cause = logoutResult.exceptionOrNull()
+                        val reason = when (cause) {
+                            is TimeoutCancellationException -> "Logout timed out. Network may be unavailable."
+                            else -> SensitiveDataRedactor.redact(cause?.message ?: "Logout failed")
+                        }
+                        // Do NOT delete local data on logout failure
+                        mutableResetResult.value = AccountResetResult.Failed(reason)
+                        return@launch
+                    }
+
+                    val response = logoutResult.getOrNull()
+                    if (response?.string("@type") == "error") {
+                        val err = SensitiveDataRedactor.redact(response.string("message") ?: "logOut error")
+                        // Fail immediately on TDLib logOut error — do NOT wait for close timeout
+                        mutableResetResult.value = AccountResetResult.Failed("Logout failed: $err")
+                        return@launch
+                    }
+
+                    // Step 3: Wait for TDLib to confirm authorizationStateClosed
+                    val closeResult = runCatching {
+                        withTimeout(CLOSE_TIMEOUT_MS) {
+                            authorization.first { it.state == AuthorizationState.Closed }
+                        }
+                    }
+
+                    if (closeResult.isFailure) {
+                        val reason = "TDLib did not confirm close within timeout"
+                        mutableResetResult.value = AccountResetResult.Failed(reason)
+                        return@launch
+                    }
+
+                    // Step 4: TDLib confirmed Closed — safe to delete local data
+                    databaseDirectory.deleteRecursively()
+                    filesDirectory.deleteRecursively()
+                    encryptionManager?.clearKey()
+
+                    mutableResetResult.value = AccountResetResult.Completed
+                } catch (e: CancellationException) {
+                    mutableResetResult.value = AccountResetResult.Cancelled
+                    throw e
+                } catch (e: Exception) {
+                    mutableResetResult.value = AccountResetResult.Failed(
+                        SensitiveDataRedactor.redact(e.message ?: "Reset failed")
+                    )
                 }
-
-                if (closeResult.isFailure) {
-                    val reason = "TDLib did not confirm close within timeout"
-                    mutableResetResult.value = AccountResetResult.Failed(reason)
-                    return@launch
-                }
-
-                // Step 4: TDLib confirmed Closed — safe to delete local data
-                databaseDirectory.deleteRecursively()
-                filesDirectory.deleteRecursively()
-                encryptionManager?.clearKey()
-
-                mutableResetResult.value = AccountResetResult.Completed
-            } catch (e: CancellationException) {
-                mutableResetResult.value = AccountResetResult.Cancelled
-                throw e
-            } catch (e: Exception) {
-                mutableResetResult.value = AccountResetResult.Failed(
-                    SensitiveDataRedactor.redact(e.message ?: "Reset failed")
-                )
             }
+            resetJob = launchedJob
+            launchedJob
         }
 
-        synchronized(lock) { resetJob = job }
         job.join()
         return mutableResetResult.value ?: AccountResetResult.Failed("Reset did not complete")
     }
@@ -512,8 +527,8 @@ class TdLibJsonGateway internal constructor(
 
             val rawMessages = response["messages"]?.jsonArray.orEmpty()
 
-            // Determine end of history: TDLib returning fewer than requested means no more messages
-            val endOfHistory = rawMessages.size < safeLimit
+            // End of history is true strictly when TDLib returns 0 raw messages
+            val endOfHistory = rawMessages.isEmpty()
 
             // Get raw message IDs for cursor tracking (before filtering)
             val rawMessageIds = rawMessages.mapNotNull { it.jsonObject.long("id").takeIf { id -> id != 0L } }
@@ -530,6 +545,11 @@ class TdLibJsonGateway internal constructor(
 
             // Raw cursor is the last raw message ID (not last mapped item)
             val rawLastMessageId = rawMessageIds.lastOrNull()
+
+            // If cursor didn't advance, break out safely to prevent infinite loop
+            if (rawLastMessageId == cursor && cursor != 0L) {
+                return HistoryPage.error("Cursor failed to advance beyond $cursor")
+            }
 
             if (items.isNotEmpty()) {
                 return HistoryPage(
@@ -644,6 +664,13 @@ class TdLibJsonGateway internal constructor(
         return if (chatId == 0L) null else chatId
     }
 
+    override suspend fun getAvailableSources(): List<FileSource> {
+        val savedChatId = getSavedMessagesChatId() ?: return emptyList()
+        return listOf(
+            FileSource(id = savedChatId, title = "Saved Messages", savedMessages = true)
+        )
+    }
+
     private fun updateItem(fileId: Int, transform: (MediaItem) -> MediaItem) {
         val content = mutableLibrary.value as? LibraryState.Content ?: return
         mutableLibrary.value = LibraryState.Content(content.items.map { if (it.fileId == fileId) transform(it) else it })
@@ -715,18 +742,55 @@ class TdLibJsonGateway internal constructor(
     }
 
     /**
+     * Best-effort local resource detachment when TDLib close times out or fails natively.
+     * Transitions state to ABORTED (never CLOSED), records diagnostics, and releases local holders.
+     */
+    private fun abandonClientLocalResources(reason: String) {
+        val cancelledRequests = mutableListOf<CompletableDeferred<JsonObject>>()
+        synchronized(lock) {
+            if (lifecycle == GatewayLifecycle.CLOSED || lifecycle == GatewayLifecycle.ABORTED) return
+            transitionLocked(GatewayLifecycle.ABORTED, reason)
+            mutableAuthorization.value = AuthorizationSession(
+                state = AuthorizationState.Other("aborted_timeout"),
+                safeError = SensitiveDataRedactor.redact(reason),
+            )
+            if (countedClient) {
+                countedClient = false
+                instances.updateAndGet { if (it > 0) it - 1 else 0 }
+            }
+            clientId = null
+            mutableState.value = mutableState.value.copy(
+                clientCreated = false,
+                clientInstanceCount = instances.get(),
+            )
+            cancelledRequests.addAll(pendingRequests.values)
+            pendingRequests.clear()
+            pendingDownloads.clear()
+            pendingCancellations.clear()
+            pendingDownloadRequests.clear()
+            pendingCancelRequests.clear()
+            pendingAuthRequest = null
+            pendingParametersRequest = null
+            pendingLibraryRequest = null
+        }
+        cancelledRequests.forEach {
+            it.completeExceptionally(CancellationException("Gateway aborted: $reason"))
+        }
+        worker?.cancel()
+        worker = null
+    }
+
+    /**
      * Initiates gateway close:
      * 1. Transition to CLOSING (idempotent — second call returns immediately).
      * 2. Send TDLib close request.
      * 3. Receive loop continues in CLOSING state, waiting for authorizationStateClosed.
-     * 4. [finalizeClose] is called only when TDLib sends the terminal state.
-     * 5. A bounded timeout in the calling scope ensures we don't hang indefinitely.
-     *
-     * Resources (clientId, counter, pending requests) are released ONLY in [finalizeClose].
+     * 4. [finalizeClose] is called ONLY when TDLib sends the terminal state.
+     * 5. If timeout occurs, [abandonClientLocalResources] transitions state to ABORTED (not CLOSED).
      */
     override fun close() {
         synchronized(lock) {
-            if (lifecycle == GatewayLifecycle.CLOSING || lifecycle == GatewayLifecycle.CLOSED) return
+            if (lifecycle == GatewayLifecycle.CLOSING || lifecycle == GatewayLifecycle.CLOSED || lifecycle == GatewayLifecycle.ABORTED) return
             if (lifecycle == GatewayLifecycle.NEW || lifecycle == GatewayLifecycle.FAILED) {
                 // Never started or failed before client created — go straight to CLOSED
                 transitionLocked(GatewayLifecycle.CLOSED)
@@ -737,30 +801,30 @@ class TdLibJsonGateway internal constructor(
             mutableAuthorization.value = AuthorizationSession(AuthorizationState.Closing)
         }
 
-        // Send TDLib close — receive loop will catch authorizationStateClosed and call finalizeClose()
         val id = synchronized(lock) { clientId }
         if (id != null) {
             scope.launch {
-                runCatching { native.send(id, "{\"@type\":\"close\"}") }
-                // Bounded timeout: if TDLib doesn't confirm within CLOSE_TIMEOUT_MS, force-finalize
-                withTimeoutOrNull(CLOSE_TIMEOUT_MS) {
-                    // Wait for finalizeClose() to be called (lifecycle == CLOSED)
+                val sendResult = runCatching { native.send(id, "{\"@type\":\"close\"}") }
+                if (sendResult.isFailure) {
+                    abandonClientLocalResources("Native send close failed: ${sendResult.exceptionOrNull()?.message}")
+                    scope.cancel()
+                    return@launch
+                }
+
+                val completed = withTimeoutOrNull(CLOSE_TIMEOUT_MS) {
                     while (synchronized(lock) { lifecycle != GatewayLifecycle.CLOSED }) {
                         delay(50)
                     }
-                } ?: run {
-                    // Timeout: force finalize
-                    synchronized(lock) {
-                        if (lifecycle != GatewayLifecycle.CLOSED) {
-                            transitionLocked(GatewayLifecycle.FAILED, "Close timed out")
-                        }
-                    }
-                    finalizeClose()
+                    true
+                }
+
+                if (completed == null) {
+                    // Timeout: transition to ABORTED (do NOT call finalizeClose or claim CLOSED)
+                    abandonClientLocalResources("TDLib close timed out after ${CLOSE_TIMEOUT_MS}ms")
                 }
                 scope.cancel()
             }
         } else {
-            // No client — go to CLOSED immediately
             finalizeClose()
             scope.cancel()
         }

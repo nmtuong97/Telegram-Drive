@@ -25,4 +25,6 @@
     <string name="media_error">Unable to open this local file</string>
     <string name="session_closed">Telegram session closed. Reopen the app to sign in again.</string>
     <string name="download_canceled">Download canceled</string>
+    <string name="retry">Retry</string>
+    <string name="source_selector">Source</string>
 </resources>

@@ -7,6 +7,9 @@ import com.nmtuong.telegramdrive.domain.TransferState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+
 /**
  * Adapter that exposes [TransferCoordinator] to the feature layer.
  *
@@ -20,11 +23,13 @@ class DownloadCoordinator(
     scope: CoroutineScope,
     private val accountId: Long = 0L,
     private val databaseGeneration: Long = 1L,
+    dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val coordinator = TransferCoordinator(
         repository = repository,
         accountId = accountId,
         databaseGeneration = databaseGeneration,
+        dispatcher = dispatcher,
     )
 
     /** Single source of truth: fileId → TransferState */

@@ -30,6 +30,7 @@ class TransferCoordinatorTest {
 
         override fun start() {}
         override fun submit(action: AuthorizationAction) = ActionResult.ACCEPTED
+        override suspend fun logoutAndReset(): AccountResetResult = AccountResetResult.Completed
         override fun loadSavedMessages(limit: Int) = ActionResult.ACCEPTED
         override fun download(fileId: Int): ActionResult {
             downloadedFileIds.add(fileId)
@@ -41,6 +42,7 @@ class TransferCoordinatorTest {
         }
         override fun preview(itemId: Long): PreviewTarget? = null
         override suspend fun getSavedMessagesChatId(): Long? = 1L
+        override suspend fun getAvailableSources(): List<FileSource> = listOf(FileSource(1L, "Saved Messages", true))
         override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage =
             HistoryPage.empty()
         override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> =
@@ -201,6 +203,30 @@ class TransferCoordinatorTest {
     }
 
     // ── Terminal state isTerminal flag ────────────────────────────────────────
+
+    @Test
+    fun `dynamic generation change invalidates active transfer`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val repo = StubRepository()
+        var currentGen = 1L
+        val coord = TransferCoordinator(
+            repository = repo,
+            accountId = 1L,
+            databaseGeneration = 1L,
+            dispatcher = dispatcher,
+            activeGenerationProvider = { currentGen },
+        )
+
+        coord.startTransfer(60, identity(60, generation = 1L))
+        advanceTimeBy(50)
+
+        // Invalidate generation dynamically (e.g. account reset occurred)
+        currentGen = 2L
+
+        // Next progress update or start with gen 1 should fail
+        val result = coord.startTransfer(61, identity(61, generation = 1L))
+        assertFalse(result)
+    }
 
     @Test
     fun `isTerminal is true for all terminal states`() {

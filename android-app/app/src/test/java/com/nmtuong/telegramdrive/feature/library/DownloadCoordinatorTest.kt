@@ -23,8 +23,10 @@ class DownloadCoordinatorTest {
 
         override fun start() {}
         override fun submit(action: AuthorizationAction) = ActionResult.ACCEPTED
+        override suspend fun logoutAndReset(): AccountResetResult = AccountResetResult.Completed
         override fun loadSavedMessages(limit: Int) = ActionResult.ACCEPTED
         override suspend fun getSavedMessagesChatId(): Long? = 1L
+        override suspend fun getAvailableSources(): List<FileSource> = listOf(FileSource(1L, "Saved Messages", true))
         override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int) =
             com.nmtuong.telegramdrive.domain.HistoryPage.empty()
         override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> =
@@ -48,7 +50,7 @@ class DownloadCoordinatorTest {
     fun `startDownload is idempotent for same fileId`() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val repo = FakeRepo()
-        val coordinator = DownloadCoordinator(repo, this)
+        val coordinator = DownloadCoordinator(repo, this, dispatcher = dispatcher)
 
         coordinator.startDownload(1)
         coordinator.startDownload(1) // Duplicate
@@ -63,7 +65,7 @@ class DownloadCoordinatorTest {
     fun `cancelDownload cancels an active download`() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val repo = FakeRepo()
-        val coordinator = DownloadCoordinator(repo, this)
+        val coordinator = DownloadCoordinator(repo, this, dispatcher = dispatcher)
 
         coordinator.startDownload(5)
         advanceTimeBy(50)
@@ -77,8 +79,9 @@ class DownloadCoordinatorTest {
 
     @Test
     fun `clear empties all state`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
         val repo = FakeRepo()
-        val coordinator = DownloadCoordinator(repo, this)
+        val coordinator = DownloadCoordinator(repo, this, dispatcher = dispatcher)
 
         coordinator.startDownload(1)
         coordinator.startDownload(2)

@@ -41,11 +41,13 @@ private class RecordingGateway : TdLibGateway {
     override val library: StateFlow<LibraryState> = MutableStateFlow(LibraryState.Idle)
     override fun start() { starts++ }
     override fun submit(action: AuthorizationAction) = ActionResult.ACCEPTED
+    override suspend fun logoutAndReset(): AccountResetResult = AccountResetResult.Completed
     override fun loadSavedMessages(limit: Int) = ActionResult.ACCEPTED
     override fun download(fileId: Int) = ActionResult.ACCEPTED
     override fun cancelDownload(fileId: Int) = ActionResult.ACCEPTED
     override fun preview(itemId: Long): PreviewTarget? = null
     override suspend fun getSavedMessagesChatId(): Long? = null
+    override suspend fun getAvailableSources(): List<FileSource> = emptyList()
     override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage =
         HistoryPage.empty()
     override fun close() { closes++ }

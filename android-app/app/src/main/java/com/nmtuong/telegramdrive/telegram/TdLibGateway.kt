@@ -16,11 +16,13 @@ interface TdLibGateway : Closeable {
     val library: StateFlow<LibraryState>
     fun start()
     fun submit(action: AuthorizationAction): ActionResult
+    suspend fun logoutAndReset(): AccountResetResult
     fun loadSavedMessages(limit: Int): ActionResult
     fun download(fileId: Int): ActionResult
     fun cancelDownload(fileId: Int): ActionResult
     fun preview(itemId: Long): PreviewTarget?
     suspend fun getSavedMessagesChatId(): Long?
+    suspend fun getAvailableSources(): List<FileSource>
 
     /**
      * Load a bounded page of chat history.

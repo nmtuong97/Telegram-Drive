@@ -12,15 +12,45 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/**
- * Versioned encryption record stored as an atomic unit.
- * Never written in two separate transactions.
- */
 private const val SCHEMA_VERSION = 1
 private const val PREF_FILE_NAME = "tdlib_encryption_v3"
-// Single atomic key for the entire record
 private const val KEY_RECORD = "encryption_record_v1"
+private const val KEY_CLEANUP_MARKER = "cleanup_in_progress_v1"
 private const val SEPARATOR = "|"
+
+/**
+ * App-owned database state abstraction.
+ */
+data class DatabaseState(
+    val exists: Boolean,
+    val hasMeaningfulTdLibData: Boolean = false,
+    val generation: Long = 1L,
+)
+
+/**
+ * Explicit storage read result for the encryption record.
+ * Avoids nullable records representing missing and corrupt states ambiguously.
+ */
+sealed interface EncryptionStorageResult {
+    object Missing : EncryptionStorageResult
+    data class Valid(val record: EncryptionRecord) : EncryptionStorageResult
+    data class Corrupt(val reason: String) : EncryptionStorageResult
+    data class UnsupportedVersion(val version: Int) : EncryptionStorageResult
+    object LegacyDetected : EncryptionStorageResult
+    data class StorageFailure(val reason: String) : EncryptionStorageResult
+}
+
+/**
+ * Result of explicit key cleanup operation.
+ */
+sealed interface KeyClearResult {
+    object Success : KeyClearResult
+    data class PartialFailure(
+        val recordDeleted: Boolean,
+        val aliasDeleted: Boolean,
+        val reason: String,
+    ) : KeyClearResult
+}
 
 /**
  * Manages TDLib database encryption key material.
@@ -32,19 +62,18 @@ private const val SEPARATOR = "|"
  * - Single atomic record: schemaVersion|ciphertext_b64|iv_b64|keyAlias stored via synchronous commit().
  * - Mutex protects get-or-create atomicity.
  *
- * Recovery decisions:
- * 1. No record, no database → generate new key (clean start).
- * 2. Valid record, database exists → decrypt and reuse.
- * 3. Record exists but cannot decrypt (corrupt ciphertext) → safe error, require reset.
- * 4. Record exists but Keystore alias missing → safe error, require reset.
- * 5. Partial/corrupt record format → safe error, require reset.
- * 6. No record but database exists → safe error (cannot silently generate new key).
- * 7. Legacy format detected → safe error, require explicit migration or reset.
+ * Matrix semantics:
+ * 1. Missing record + no database -> Generate wrapping & data key, persist atomically. Plaintext only after durable success.
+ * 2. Valid record + database -> Decrypt & reuse.
+ * 3. Corrupt/partial record -> Do NOT generate key, require explicit reset.
+ * 4. Database exists + record missing -> Do NOT generate key, require explicit reset.
+ * 5. Record exists + Keystore alias missing -> Do NOT generate alias, require explicit reset.
+ * 6. Record exists + database missing -> Decrypt or perform documented stale-state cleanup.
+ * 7. Legacy format -> Detect, do NOT silently migrate with new key, require explicit reset.
  *
  * Security:
- * - No key material logged.
+ * - No key material, ciphertext, or IV logged or exposed in exceptions.
  * - Error messages describe recovery action only.
- * - Plaintext key never returned before persistence succeeds.
  */
 class DatabaseEncryptionManager(
     private val context: Context,
@@ -71,54 +100,122 @@ class DatabaseEncryptionManager(
     /**
      * Returns the plaintext data key for TDLib.
      *
-     * Thread-safe atomic get-or-create:
-     * - Two concurrent callers never receive two different keys.
-     * - Plaintext is only returned after successful durable persistence.
-     *
-     * @throws DatabaseKeyException with a safe recovery description on any failure.
+     * @param databaseState App-owned abstraction of current database existence and state.
+     * @throws DatabaseKeyException with safe recovery description on any failure.
      */
     @Throws(DatabaseKeyException::class)
-    fun getOrGenerateKey(): String {
+    fun getOrGenerateKey(databaseState: DatabaseState = DatabaseState(exists = false)): String {
         synchronized(mutex) {
-            val existing = readRecord()
-            if (existing != null) {
-                return decryptRecord(existing)
+            checkCleanupMarker()
+
+            return when (val storageResult = readStorageResult()) {
+                is EncryptionStorageResult.Missing -> {
+                    if (databaseState.exists || databaseState.hasMeaningfulTdLibData) {
+                        throw DatabaseKeyException(
+                            "Database exists but encryption record is missing. Explicit reset/recovery is required."
+                        )
+                    }
+                    generateAndPersist()
+                }
+                is EncryptionStorageResult.Valid -> {
+                    decryptRecord(storageResult.record)
+                }
+                is EncryptionStorageResult.Corrupt -> {
+                    throw DatabaseKeyException(
+                        "Encryption record is corrupt (${storageResult.reason}). Account reset is required."
+                    )
+                }
+                is EncryptionStorageResult.UnsupportedVersion -> {
+                    throw DatabaseKeyException(
+                        "Unsupported encryption record schema version ${storageResult.version}. Account reset is required."
+                    )
+                }
+                is EncryptionStorageResult.LegacyDetected -> {
+                    throw DatabaseKeyException(
+                        "Legacy encryption record format detected. Explicit reset is required."
+                    )
+                }
+                is EncryptionStorageResult.StorageFailure -> {
+                    throw DatabaseKeyException(
+                        "Failed to read encryption storage: ${storageResult.reason}"
+                    )
+                }
             }
-            return generateAndPersist()
         }
     }
 
     /**
      * Deletes the wrapped key record and Keystore alias.
-     * Keystore deletion failure is propagated (not silently ignored).
-     *
-     * @throws DatabaseKeyException if Keystore deletion fails.
+     * Idempotent cleanup with explicit result tracking.
      */
     @Throws(DatabaseKeyException::class)
-    fun clearKey() {
+    fun clearKey(): KeyClearResult {
         synchronized(mutex) {
-            val committed = prefs.edit().remove(KEY_RECORD).commit()
-            if (!committed) {
-                throw DatabaseKeyException("Failed to commit key record deletion. Storage may be unavailable.")
+            // Set cleanup marker first for idempotent startup resume
+            prefs.edit().putBoolean(KEY_CLEANUP_MARKER, true).commit()
+
+            var recordDeleted = false
+            var aliasDeleted = false
+
+            val removeCommitted = prefs.edit().remove(KEY_RECORD).commit()
+            if (removeCommitted || !prefs.contains(KEY_RECORD)) {
+                recordDeleted = true
             }
-            deleteKeystoreAlias()
+
+            try {
+                deleteKeystoreAlias()
+                aliasDeleted = true
+            } catch (e: Exception) {
+                aliasDeleted = !keyStore.containsAlias(keystoreAlias)
+            }
+
+            if (recordDeleted && aliasDeleted) {
+                prefs.edit().remove(KEY_CLEANUP_MARKER).commit()
+                return KeyClearResult.Success
+            }
+
+            val reason = when {
+                !recordDeleted && !aliasDeleted -> "Failed to delete record and Keystore alias."
+                !recordDeleted -> "Failed to delete encryption record from storage."
+                else -> "Failed to delete Keystore alias."
+            }
+
+            throw DatabaseKeyException(
+                "Incomplete key cleanup: $reason Account reset must be retried."
+            )
         }
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
 
-    private fun readRecord(): EncryptionRecord? {
-        val raw = prefs.getString(KEY_RECORD, null) ?: return null
-        return EncryptionRecord.parse(raw)
+    private fun checkCleanupMarker() {
+        if (prefs.getBoolean(KEY_CLEANUP_MARKER, false)) {
+            // Unfinished cleanup detected (e.g. process death mid-clear)
+            throw DatabaseKeyException(
+                "Unfinished key cleanup detected from previous session. Account reset is required."
+            )
+        }
+    }
+
+    private fun readStorageResult(): EncryptionStorageResult {
+        return try {
+            val raw = prefs.getString(KEY_RECORD, null)
+            if (raw == null) {
+                // Check if legacy pref keys exist
+                if (prefs.contains("encryption_key_v1") || prefs.contains("encryption_record_v0")) {
+                    EncryptionStorageResult.LegacyDetected
+                } else {
+                    EncryptionStorageResult.Missing
+                }
+            } else {
+                EncryptionRecord.parse(raw)
+            }
+        } catch (e: Exception) {
+            EncryptionStorageResult.StorageFailure(e.message ?: "Storage read error")
+        }
     }
 
     private fun decryptRecord(record: EncryptionRecord): String {
-        if (record.schemaVersion != SCHEMA_VERSION) {
-            throw DatabaseKeyException(
-                "Unsupported encryption record schema version ${record.schemaVersion}. " +
-                    "Account reset is required to generate a new encryption key."
-            )
-        }
         if (!keyStore.containsAlias(record.keyAlias)) {
             throw DatabaseKeyException(
                 "Android Keystore alias '${sanitizeAlias(record.keyAlias)}' is missing. " +
@@ -193,14 +290,8 @@ class DatabaseEncryptionManager(
     }
 
     private fun deleteKeystoreAlias() {
-        try {
-            if (keyStore.containsAlias(keystoreAlias)) {
-                keyStore.deleteEntry(keystoreAlias)
-            }
-        } catch (e: Exception) {
-            throw DatabaseKeyException(
-                "Failed to delete Keystore alias. Manual account cleanup may be required."
-            )
+        if (keyStore.containsAlias(keystoreAlias)) {
+            keyStore.deleteEntry(keystoreAlias)
         }
     }
 
@@ -212,7 +303,7 @@ class DatabaseEncryptionManager(
  * Atomic versioned encryption record.
  * Serialized as a single string so it can be written in one SharedPreferences transaction.
  */
-internal data class EncryptionRecord(
+data class EncryptionRecord(
     val schemaVersion: Int,
     val ciphertextBase64: String,
     val ivBase64: String,
@@ -222,15 +313,23 @@ internal data class EncryptionRecord(
         "$schemaVersion$SEPARATOR$ciphertextBase64$SEPARATOR$ivBase64$SEPARATOR$keyAlias"
 
     companion object {
-        fun parse(raw: String): EncryptionRecord? {
+        fun parse(raw: String): EncryptionStorageResult {
+            if (raw.isBlank()) return EncryptionStorageResult.Missing
             val parts = raw.split(SEPARATOR)
-            if (parts.size != 4) return null
-            val version = parts[0].toIntOrNull() ?: return null
-            return EncryptionRecord(
-                schemaVersion = version,
-                ciphertextBase64 = parts[1],
-                ivBase64 = parts[2],
-                keyAlias = parts[3],
+            if (parts.size != 4) return EncryptionStorageResult.Corrupt("Invalid segment count ${parts.size}")
+            val version = parts[0].toIntOrNull() ?: return EncryptionStorageResult.Corrupt("Invalid version string ${parts[0]}")
+            if (version > SCHEMA_VERSION) return EncryptionStorageResult.UnsupportedVersion(version)
+            if (version < 1) return EncryptionStorageResult.LegacyDetected
+            if (parts[1].isBlank() || parts[2].isBlank() || parts[3].isBlank()) {
+                return EncryptionStorageResult.Corrupt("Record contains empty fields")
+            }
+            return EncryptionStorageResult.Valid(
+                EncryptionRecord(
+                    schemaVersion = version,
+                    ciphertextBase64 = parts[1],
+                    ivBase64 = parts[2],
+                    keyAlias = parts[3],
+                )
             )
         }
     }

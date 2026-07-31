@@ -2,7 +2,7 @@ package com.nmtuong.telegramdrive.domain
 
 enum class DataSourceMode(val id: String) { REAL("real"), FAKE("fake") }
 
-enum class GatewayLifecycle { NEW, STARTING, RUNNING, CLOSING, CLOSED, FAILED }
+enum class GatewayLifecycle { NEW, STARTING, RUNNING, CLOSING, CLOSED, ABORTED, FAILED }
 
 sealed interface AuthorizationState {
   data object Unknown : AuthorizationState
@@ -104,6 +104,14 @@ data class HistoryPage(
     fun empty() = HistoryPage(emptyList(), null, true)
   }
 }
+
+/**
+ * Identity of an active account session and database generation.
+ */
+data class AccountSessionIdentity(
+  val accountId: Long,
+  val databaseGeneration: Long,
+)
 
 /**
  * Identifies a transfer within an account/session scope.
