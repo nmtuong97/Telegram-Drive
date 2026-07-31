@@ -41,3 +41,39 @@ This project is indexed by GitNexus as **Telegram-Drive** (5042 symbols, 9000 re
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## Ứng dụng Android độc lập & Quy trình Android CLI
+
+- Project nằm tại `android-app/`; không sửa `app/src-tauri/gen/android` vì đó là output generated của Tauri.
+- Dùng Kotlin, Compose, Kotlin DSL, minSdk 26 và application ID `com.nmtuong.telegramdrive`.
+- Dependency hướng vào trong: UI/feature → repository → gateway; UI/domain không import `org.drinkless.tdlib`.
+- TDLib chỉ lấy từ source Telegram chính thức và build bằng `scripts/build-tdlib-android.sh`; không thêm binary bên thứ ba.
+- TDLib pin commit `022d60202e446ad1287b9fb68e687c8a0760788b`; crypto pin OpenSSL 3.5.7 LTS với checksum trong script; metadata/hash binary ở `android-app/tdlib-build-metadata.txt`.
+- Real/fake source chọn bằng Gradle property `-PtelegramDataSource=real|fake`; không đưa credential/session thật vào source hoặc artifact.
+- Android backup và device transfer phải giữ trạng thái disabled/excluded cho toàn bộ account, TDLib database/session/key, cache và downloaded media.
+- TDLib gateway có lifecycle state machine application-owned; không dùng `Application.onTerminate()` làm cleanup production. Logout/reset/test teardown là explicit close owners; process kill được xem là abrupt.
+- Phase 1 chỉ là vertical slice auth/session/Saved Messages/download/preview; không mở rộng sang Room, global gallery, background transfer, streaming, release, CI/CD, MCP hoặc Lightbuild.
+
+### Tận dụng Android CLI trong phát triển Android (`android-cli`)
+
+Tất cả AI Agent (Antigravity, Codex, Copilot, Subagents) khi làm việc trong `android-app/` PHẢI tận dụng sức mạnh của `android` CLI:
+
+1. **Tra cứu tài liệu chuẩn (Android Documentation Lookup)**:
+   - Dùng `android docs search "<keyword>"` hoặc `android docs fetch "<url_or_topic>"` để tra cứu API Android, Jetpack Compose, Coroutines, Android Security best practices chính thống từ Android Knowledge Base trước khi viết code cho các tính năng mới hoặc API chưa quen thuộc.
+
+2. **Kiểm tra UI Layout tự động (Layout Hierarchy Inspection)**:
+   - Khi ứng dụng đang chạy trên Emulator hoặc thiết bị thật, dùng `android layout -p` để lấy cây giao diện dưới dạng JSON.
+   - Ưu tiên dùng `android layout` để kiểm tra node UI, text, visibility và bounds nhanh chóng và chính xác.
+
+3. **Xác minh trực quan (Visual Screenshots)**:
+   - Sử dụng `android screen capture` hoặc `android screenshot` để chụp ảnh màn hình thiết bị khi hoàn tất chỉnh sửa UI hoặc cần cung cấp bằng chứng chạy runtime.
+
+4. **Triển khai & Chạy ứng dụng (Deploy & Run)**:
+   - Dùng `android run --debug` hoặc `android run --apks=<path>` để nạp và khởi chạy APK trực tiếp lên thiết bị/emulator.
+
+5. **Quản lý SDK & Emulator (SDK & AVD Management)**:
+   - Sử dụng `android sdk list`, `android sdk install <package>`, `android emulator list`, `android emulator start` để kiểm tra và quản lý môi trường Android SDK/AVD khi cần thiết.
+
+6. **Xác minh bắt buộc trước handoff (Mandatory Handoff Verification)**:
+   - Luôn chạy `./gradlew testDebugUnitTest lintDebug assembleDebug` trong thư mục `android-app/` và dùng `android` CLI/adb để install, launch, dump layout hoặc chụp screenshot trước khi báo hoàn tất công việc.
+
