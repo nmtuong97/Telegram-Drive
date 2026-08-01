@@ -1,0 +1,33 @@
+[
+  {
+    "text": "Telegram sign in",
+    "center": "[379,282]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable",
+      "long-clickable"
+    ],
+    "center": "[640,480]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable"
+    ],
+    "center": "[230,696]",
+    "key": 3506402
+  },
+  {
+    "text": "Phone number",
+    "center": "[284,492]",
+    "key": 3506402
+  },
+  {
+    "text": "Continue",
+    "center": "[230,696]",
+    "key": 3506402
+  }
+]

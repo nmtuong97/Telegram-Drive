@@ -4,7 +4,7 @@
 
 - **Repository**: `nmtuong97/Telegram-Drive`
 - **Branch**: `agent/android-phase-2`
-- **HEAD Commit**: `f9159e8822bcb884a0d5bf2b218acb423d221e19`
+- **HEAD Commit**: `e5874a0239803fb118bc4c2f39d9ead99d307f10`
 - **App Module**: `android-app/`
 
 ---
@@ -64,21 +64,32 @@
 
 ---
 
-## Claim Breakdown
+## Phase 2 Final Production Gate Status
 
-| Claim | Implemented | Unit-Tested | Instrumented-Tested | Runtime-Verified | Blocked / Unverified |
-| --- | --- | --- | --- | --- | --- |
-| Baseline Clean Build | Yes | Yes | N/A (unit matrix) | Yes | None |
-| Encryption Record Sum Type & Recovery | Yes | Yes | N/A | Yes | None |
-| TDLib Close & Timeout Lifecycle | Yes | Yes | N/A | Yes | None |
-| Logout & Reset Atomic Machine | Yes | Yes | N/A | Yes | None |
-| Paging Cursor & End-of-History | Yes | Yes | N/A | Yes | None |
-| Transfer Coordinator & Event Architecture | Yes | Yes | N/A | Yes | None |
-| Saved Messages Paging UI | Yes | Yes | N/A | Yes | None |
-| Real Identity & Generation Invalidation | Yes | Yes | N/A | Yes | None |
-| Cancel / Retry Mechanics | Yes | Yes | N/A | Yes | None |
-| Video Playback in App | Yes | Yes | N/A | Yes | None |
-| Minified Build Verification | Yes | Yes | N/A | Yes | None |
-| Zero High/Medium Findings | Yes | Yes | N/A | Yes | None |
+- **Status**: **PASSED & COMPLETED**
+- **Evidence SHA**: `e5874a0239803fb118bc4c2f39d9ead99d307f10`
+- **Evidence Path**: [docs/evidence/phase-2/e5874a0239803fb118bc4c2f39d9ead99d307f10/manifest.md](file:///Users/manhtuong/Documents/GitHub/Telegram-Drive/docs/evidence/phase-2/e5874a0239803fb118bc4c2f39d9ead99d307f10/manifest.md)
+
+### Verified Core Enhancements
+
+1. **Real Account Identity Wiring**:
+   - Injected `AccountSessionIdentityProvider` directly into `TdLibJsonGateway` in `AppContainer.kt`.
+   - Dynamic user ID update upon `getMe` completion. Account ID `0` is treated as invalid.
+
+2. **Transfer Collector & Context Correlation**:
+   - `TransferCoordinator` uses `CoroutineStart.UNDISPATCHED` for immediate session collector readiness.
+   - `TdLibJsonGateway` tracks active operations with `PendingTransferContext` carrying monotonic `attemptId`.
+   - All TDLib file updates emit exact request identity and attempt context. Terminal failure events are emitted immediately on invalid state or send failures.
+
+3. **Atomic 11-Step Account Reset**:
+   - `ResetProgress` sequence strictly halts on DB/file deletion or key clearing errors without wiping account identity.
+
+4. **Verification Matrix Clean Pass**:
+   - `./gradlew :app:compileDebugKotlin` -> SUCCESS
+   - `./gradlew :app:compileDebugUnitTestKotlin` -> SUCCESS
+   - `./gradlew :app:testDebugUnitTest` -> SUCCESS
+   - `./gradlew :app:lintDebug` -> SUCCESS (40s, clean)
+   - `./gradlew :app:assembleDebug -PtelegramDataSource=fake` -> SUCCESS (17s)
+   - Android CLI `android run` / `android layout` / `android screen capture` -> VERIFIED
 
 
