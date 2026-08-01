@@ -9,6 +9,7 @@ import com.nmtuong.telegramdrive.domain.TransferState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 
+import java.io.Closeable
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 
@@ -29,7 +30,7 @@ class DownloadCoordinator(
     private val accountId: Long = 0L,
     private val databaseGeneration: Long = 1L,
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
-) {
+) : Closeable {
     private val coordinator = TransferCoordinator(
         repository = repository,
         accountId = accountId,
@@ -60,7 +61,7 @@ class DownloadCoordinator(
     }
 
     /** CP8: Called from ViewModel.onCleared() to release coordinator scope. */
-    fun close() {
+    override fun close() {
         coordinator.close()
     }
 

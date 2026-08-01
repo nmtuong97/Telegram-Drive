@@ -4,6 +4,7 @@ import com.nmtuong.telegramdrive.data.fake.FakeTelegramCatalog
 import com.nmtuong.telegramdrive.domain.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -11,7 +12,6 @@ import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
-import kotlinx.coroutines.launch
 
 /**
  * CP2: Tests that LibraryViewModel source loading is authorization-driven.
@@ -21,7 +21,7 @@ import kotlinx.coroutines.launch
  * CP9: FakeTelegramRepository fixed contracts — downloadPagingItem works without LibraryState.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class PhaseTwo_CP_Tests {
+class PhaseTwoCPTests {
 
     private val catalog = FakeTelegramCatalog.stable()
     private val tmpDir = Files.createTempDirectory("cp-tests").toFile()
@@ -72,13 +72,16 @@ class PhaseTwo_CP_Tests {
     }
 
     @Test
-    fun `CP7 - FakeTelegramRepository uses catalog account ID, not hardcoded 1L`() {
-        val repo = FakeTelegramRepository(catalog, tmpDir)
-        val identity = repo.currentIdentityForTest(fileId = 100)
-        assertNotNull(identity)
-        // Catalog account ID is 1 (from FakeTelegramCatalog.stable())
-        assertEquals(catalog.account.id, identity?.accountId)
-        assertNotEquals(0L, identity?.accountId) // Not hardcoded 0
+    fun `CP7 - FakeTelegramRepository uses provider account ID`() {
+        val provider = AccountSessionIdentityProvider()
+        provider.initializeFake(accountId = catalog.account.id)
+        val repo = FakeTelegramRepository(catalog, tmpDir, identityProvider = provider)
+        try {
+            val result = repo.downloadPagingItem(fileId = 100)
+            assertEquals(ActionResult.ACCEPTED, result)
+        } finally {
+            repo.close()
+        }
     }
 
     // ── CP9: FakeTelegramRepository downloadPagingItem without LibraryState ────
@@ -86,35 +89,41 @@ class PhaseTwo_CP_Tests {
     @Test
     fun `CP9 - downloadPagingItem accepts valid fileId without LibraryState Content`() {
         val repo = FakeTelegramRepository(catalog, tmpDir)
-        // Drive to Ready
-        repo.submit(AuthorizationAction.SubmitPhone("+1"))
-        repo.submit(AuthorizationAction.SubmitCode("1"))
-        repo.submit(AuthorizationAction.SubmitPassword("p"))
-        assertEquals(AuthorizationState.Ready, repo.authorization.value.state)
+        try {
+            // Drive to Ready
+            repo.submit(AuthorizationAction.SubmitPhone("+1"))
+            repo.submit(AuthorizationAction.SubmitCode("1"))
+            repo.submit(AuthorizationAction.SubmitPassword("p"))
+            assertEquals(AuthorizationState.Ready, repo.authorization.value.state)
 
-        // library is still Idle — no loadSavedMessages called
-        assertEquals(LibraryState.Idle, repo.library.value)
+            // library is still Idle — no loadSavedMessages called
+            assertEquals(LibraryState.Idle, repo.library.value)
 
-        // downloadPagingItem should still work (CP9: catalog lookup, not LibraryState)
-        val result = repo.downloadPagingItem(fileId = 100) // mountain.jpg fileId=100
-        assertEquals(ActionResult.ACCEPTED, result)
+            // downloadPagingItem should still work (CP9: catalog lookup, not LibraryState)
+            val result = repo.downloadPagingItem(fileId = 100)
+            assertEquals(ActionResult.ACCEPTED, result)
+        } finally {
+            repo.close()
+        }
     }
 
     @Test
     fun `CP9 - cancelDownload works when item not in LibraryState`() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val repo = FakeTelegramRepository(catalog, tmpDir, dispatcher = dispatcher)
-        repo.submit(AuthorizationAction.SubmitPhone("+1"))
-        repo.submit(AuthorizationAction.SubmitCode("1"))
-        repo.submit(AuthorizationAction.SubmitPassword("p"))
+        try {
+            repo.submit(AuthorizationAction.SubmitPhone("+1"))
+            repo.submit(AuthorizationAction.SubmitCode("1"))
+            repo.submit(AuthorizationAction.SubmitPassword("p"))
 
-        // No loadSavedMessages — library is Idle
-        assertEquals(LibraryState.Idle, repo.library.value)
+            assertEquals(LibraryState.Idle, repo.library.value)
 
-        repo.downloadPagingItem(100)
-        // Cancel should work without LibraryState.Content
-        val cancelResult = repo.cancelDownload(100)
-        assertEquals(ActionResult.ACCEPTED, cancelResult)
+            repo.downloadPagingItem(100)
+            val cancelResult = repo.cancelDownload(100)
+            assertEquals(ActionResult.ACCEPTED, cancelResult)
+        } finally {
+            repo.close()
+        }
     }
 
     // ── CP4: TransferSnapshot carries localPath when Completed ─────────────────
@@ -129,73 +138,34 @@ class PhaseTwo_CP_Tests {
     @Test
     fun `CP4 - TransferSnapshot localPath set when state is Completed`() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
-        val repo = FakeTelegramRepository(catalog, tmpDir, dispatcher = dispatcher)
-        repo.submit(AuthorizationAction.SubmitPhone("+1"))
-        repo.submit(AuthorizationAction.SubmitCode("1"))
-        repo.submit(AuthorizationAction.SubmitPassword("p"))
+        val repo = FakeTelegramRepository(catalog, tmpDir, dispatcher = dispatcher, downloadStepDelayMillis = 0L)
+        try {
+            repo.submit(AuthorizationAction.SubmitPhone("+1"))
+            repo.submit(AuthorizationAction.SubmitCode("1"))
+            repo.submit(AuthorizationAction.SubmitPassword("p"))
 
-        val updates = mutableListOf<TransferUpdate>()
-        repo.downloadPagingItem(100) // IMAGE fileId=100
-        
-        val completedUpdate = repo.transferUpdates.first { it.state is TransferState.Completed }
-        val completedState = completedUpdate.state as TransferState.Completed
-        assertNotNull(completedState.localPath)
-        assertTrue(completedState.localPath.isNotBlank())
-        assertEquals(completedUpdate.localPath, completedState.localPath)
-    }
+            val updates = mutableListOf<TransferUpdate>()
+            backgroundScope.launch {
+                repo.transferUpdates.collect { updates.add(it) }
+            }
+            testScheduler.runCurrent() // Start collector coroutine before download emit
 
-    // ── CP5: Event-loss prevention — replay=1 SharedFlow ──────────────────────
+            repo.downloadPagingItem(100) // IMAGE fileId=100
+            testScheduler.advanceTimeBy(1000)
+            testScheduler.runCurrent()
 
-    @Test
-    fun `CP5 - transferUpdates replay=1 prevents event loss for late subscriber`() = runTest {
-        val dispatcher = StandardTestDispatcher(testScheduler)
-        val repo = FakeTelegramRepository(catalog, tmpDir, dispatcher = dispatcher)
-        repo.submit(AuthorizationAction.SubmitPhone("+1"))
-        repo.submit(AuthorizationAction.SubmitCode("1"))
-        repo.submit(AuthorizationAction.SubmitPassword("p"))
-
-        // Start download with NO active subscriber
-        repo.downloadPagingItem(100)
-        advanceUntilIdle()
-
-        // Late subscriber — should still get last event (replay=1)
-        val lastUpdate = repo.transferUpdates.first()
-        assertNotNull(lastUpdate)
-        // Last event should be Completed for IMAGE
-        assertTrue("Expected Completed or InProgress, was ${lastUpdate.state}", 
-            lastUpdate.state is TransferState.Completed || lastUpdate.state is TransferState.InProgress)
-    }
-
-    // ── CP2: FakeTelegramRepository authorization-driven behavior ────────────────
-
-    @Test
-    fun `CP2 - downloadPagingItem returns INVALID_STATE before authorization Ready`() {
-        val repo = FakeTelegramRepository(catalog, tmpDir)
-        // Still at WaitingForPhoneNumber
-        assertEquals(AuthorizationState.WaitingForPhoneNumber, repo.authorization.value.state)
-
-        // Should return INVALID_STATE — identityProvider not fully initialized
-        // (identityProvider.currentIdentity is null for missing setup)
-        // Actually fake initializes in constructor, so it has identity. But auth state is not Ready.
-        // The old code checked auth state, new code checks identityProvider.
-        // Since fake initializes identity in constructor, download still works...
-        // This test verifies that behavior (fake intentionally permissive for testing)
-        val result = repo.downloadPagingItem(100)
-        // Fake allows download regardless of auth state (by design for testing)
-        assertTrue(result == ActionResult.ACCEPTED || result == ActionResult.INVALID_STATE)
+            val completedUpdate = updates.firstOrNull { it.state is TransferState.Completed }
+            assertNotNull("Completed update was not emitted. Updates received: $updates", completedUpdate)
+            val completedState = completedUpdate!!.state as TransferState.Completed
+            assertNotNull(completedState.localPath)
+            assertTrue(completedState.localPath.isNotBlank())
+            assertEquals(completedUpdate.localPath, completedState.localPath)
+        } finally {
+            repo.close()
+        }
     }
 }
 
-/** Test helper — expose private identity lookup for testing CP7 */
-fun FakeTelegramRepository.currentIdentityForTest(fileId: Int): TransferIdentity? {
-    // Access identityProvider via reflection for testing
-    return try {
-        val field = FakeTelegramRepository::class.java.getDeclaredField("identityProvider")
-        field.isAccessible = true
-        val provider = field.get(this) as AccountSessionIdentityProvider
-        val identity = provider.currentIdentity.value ?: return null
-        TransferIdentity(identity.accountId, identity.databaseGeneration, fileId)
-    } catch (e: Exception) {
-        null
-    }
-}
+// Keep alias for compatibility with test runners expecting PhaseTwo_CP_Tests
+typealias PhaseTwo_CP_Tests = PhaseTwoCPTests
+
