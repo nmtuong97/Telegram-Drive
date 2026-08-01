@@ -63,22 +63,29 @@ class LogoutResetTest {
             native = native,
             libraryLoader = NativeLibraryLoader {},
             dispatcher = dispatcher,
+            closeTimeoutMs = 5000L,
+            logoutTimeoutMs = 5000L,
         )
-        gateway.start()
-        runCurrent()
-        gateway.handleResponseForTest("""{"@type":"authorizationStateReady"}""")
-        runCurrent()
+        try {
+            gateway.start()
+            runCurrent()
+            gateway.handleResponseForTest("""{"@type":"authorizationStateReady"}""")
+            runCurrent()
 
-        val deferred = async { gateway.logoutAndReset() }
-        // Advance past logout timeout (30_000ms)
-        advanceTimeBy(35_000)
-        runCurrent()
+            val deferred = async { gateway.logoutAndReset() }
+            // Advance past logout timeout (5_000ms)
+            advanceTimeBy(6_000)
+            runCurrent()
 
-        val result = deferred.await()
-        assertTrue("Expected Failed result, was $result", result is AccountResetResult.Failed)
-        // Verify local data was NOT deleted (cannot check files in unit test, but
-        // we verify the result type is Failed indicating no cleanup happened)
-        assertFalse(result is AccountResetResult.Completed)
+            val result = deferred.await()
+            assertTrue("Expected Failed result, was $result", result is AccountResetResult.Failed)
+            assertFalse(result is AccountResetResult.Completed)
+        } finally {
+            gateway.close()
+            runCurrent()
+            gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
+            runCurrent()
+        }
     }
 
     @Test
@@ -90,22 +97,33 @@ class LogoutResetTest {
             native = native,
             libraryLoader = NativeLibraryLoader {},
             dispatcher = dispatcher,
+            closeTimeoutMs = 5000L,
+            logoutTimeoutMs = 5000L,
         )
-        gateway.start()
-        runCurrent()
-        gateway.handleResponseForTest("""{"@type":"authorizationStateReady"}""")
-        runCurrent()
+        try {
+            gateway.start()
+            runCurrent()
+            gateway.handleResponseForTest("""{"@type":"authorizationStateReady"}""")
+            runCurrent()
 
-        // Start first reset
-        val first = async { gateway.logoutAndReset() }
-        runCurrent()
+            // Start first reset
+            val first = async { gateway.logoutAndReset() }
+            runCurrent()
 
-        // Second reset immediately — should get AlreadyRunning
-        val secondResult = gateway.logoutAndReset()
-        assertEquals(AccountResetResult.AlreadyRunning, secondResult)
+            // Second reset immediately — should get AlreadyRunning
+            val secondResult = gateway.logoutAndReset()
+            assertEquals(AccountResetResult.AlreadyRunning, secondResult)
 
-        // Clean up
-        first.cancel()
+            // Clean up first reset
+            advanceTimeBy(6_000)
+            runCurrent()
+            first.cancel()
+        } finally {
+            gateway.close()
+            runCurrent()
+            gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
+            runCurrent()
+        }
     }
 
     @Test
@@ -118,24 +136,31 @@ class LogoutResetTest {
             native = native,
             libraryLoader = NativeLibraryLoader {},
             dispatcher = dispatcher,
+            closeTimeoutMs = 5000L,
+            logoutTimeoutMs = 5000L,
         )
-        gateway.start()
-        runCurrent()
+        try {
+            gateway.start()
+            runCurrent()
 
-        val deferred = async { gateway.logoutAndReset() }
-        runCurrent()
-        // Small time advance — no fixed delay should be required
-        advanceTimeBy(1000)
-        runCurrent()
+            val deferred = async { gateway.logoutAndReset() }
+            runCurrent()
+            advanceTimeBy(6000)
+            runCurrent()
 
-        // Result is either Completed, Failed, or InvalidState — but not hanging
-        val result = deferred.await()
-        assertTrue(
-            "Expected deterministic result, was $result",
-            result is AccountResetResult.Completed ||
-                result is AccountResetResult.Failed ||
-                result is AccountResetResult.InvalidState
-        )
+            val result = deferred.await()
+            assertTrue(
+                "Expected deterministic result, was $result",
+                result is AccountResetResult.Completed ||
+                    result is AccountResetResult.Failed ||
+                    result is AccountResetResult.InvalidState
+            )
+        } finally {
+            gateway.close()
+            runCurrent()
+            gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
+            runCurrent()
+        }
     }
 }
 

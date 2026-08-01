@@ -29,8 +29,8 @@ class EncryptionRecordTest {
     }
 
     @Test
-    fun `parse returns Missing for empty string`() {
-        assertEquals(EncryptionStorageResult.Missing, EncryptionRecord.parse(""))
+    fun `parse returns Corrupt for empty string`() {
+        assertTrue(EncryptionRecord.parse("") is EncryptionStorageResult.Corrupt)
     }
 
     @Test

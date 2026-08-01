@@ -25,12 +25,14 @@ class TdLibPagingSourceTest {
         override val authorization: StateFlow<AuthorizationSession> =
             MutableStateFlow(AuthorizationSession())
         override val library: StateFlow<LibraryState> = MutableStateFlow(LibraryState.Idle)
+        override val transferUpdates: kotlinx.coroutines.flow.Flow<TransferUpdate> = kotlinx.coroutines.flow.emptyFlow()
 
         override fun start() {}
         override fun submit(action: AuthorizationAction) = ActionResult.ACCEPTED
         override suspend fun logoutAndReset(): AccountResetResult = AccountResetResult.Completed
         override fun loadSavedMessages(limit: Int) = ActionResult.ACCEPTED
         override fun download(fileId: Int) = ActionResult.ACCEPTED
+        override fun downloadPagingItem(fileId: Int) = ActionResult.ACCEPTED
         override fun cancelDownload(fileId: Int) = ActionResult.ACCEPTED
         override fun preview(itemId: Long): PreviewTarget? = null
         override suspend fun getSavedMessagesChatId(): Long? = 10L

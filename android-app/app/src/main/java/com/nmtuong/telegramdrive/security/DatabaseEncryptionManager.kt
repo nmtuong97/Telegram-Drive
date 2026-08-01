@@ -314,7 +314,7 @@ data class EncryptionRecord(
 
     companion object {
         fun parse(raw: String): EncryptionStorageResult {
-            if (raw.isBlank()) return EncryptionStorageResult.Missing
+            if (raw.isBlank()) return EncryptionStorageResult.Corrupt("Blank record value")
             val parts = raw.split(SEPARATOR)
             if (parts.size != 4) return EncryptionStorageResult.Corrupt("Invalid segment count ${parts.size}")
             val version = parts[0].toIntOrNull() ?: return EncryptionStorageResult.Corrupt("Invalid version string ${parts[0]}")

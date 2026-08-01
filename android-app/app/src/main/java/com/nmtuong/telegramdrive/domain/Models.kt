@@ -137,6 +137,17 @@ sealed interface TransferState {
     get() = this is Completed || this is TransferFailed || this is TransferCancelled || this is Unavailable
 }
 
+/**
+ * Dedicated event for transfer updates across gateway/repository boundaries.
+ */
+data class TransferUpdate(
+  val identity: TransferIdentity,
+  val state: TransferState,
+  val percent: Int = 0,
+  val localPath: String? = null,
+  val safeError: String? = null,
+)
+
 /** Result of an explicit account reset/logout operation. */
 sealed interface AccountResetResult {
   data object Completed : AccountResetResult

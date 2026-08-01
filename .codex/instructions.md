@@ -14,15 +14,19 @@ When working on the standalone Android app located in `android-app/`:
    - Clean Architecture: UI/Feature -> Repository -> Gateway.
    - Do NOT import `org.drinkless.tdlib` into UI or Domain layers.
    - Keep backup & device transfer disabled for account, TDLib session, database, and downloaded files.
+   - Phase 2 scope: Saved Messages Paging → Download → Preview → Logout/Reset.
 
 2. **Android CLI Utilization (`android-cli`)**:
-   - **Documentation Lookup**: Use `android docs search "<query>"` to look up official Android & Jetpack Compose guidelines, best practices, and code examples from Google's Android Knowledge Base.
-   - **Layout Hierarchy Inspection**: Use `android layout -p` when app is running on emulator/device to inspect the JSON tree structure of UI components.
-   - **Visual Capture**: Use `android screen capture` to verify UI visually on a running device/emulator.
-   - **Deploy & Execution**: Use `android run --debug` to build and launch APKs.
+   - **Documentation Lookup**: Use `android docs search "<query>"` to search official guidelines. Use `android docs fetch "kb://..."` to read results. Do not pass arbitrary URLs.
+   - **Layout Hierarchy Inspection**: Use `android layout --pretty --output=<file.json>` when app is running on emulator/device to inspect tree structure.
+   - **Visual Capture**: Use `android screen capture --output=<file.png>` to verify UI visually (do not use `android screenshot`).
+   - **Deploy & Execution**: Build APK using `./gradlew :app:assembleDebug -PtelegramDataSource=fake`, get path via `android describe --project_dir=android-app`, then deploy using `android run --apks=<path>`.
    - **SDK & AVD Management**: Use `android sdk` and `android emulator` commands to list/manage SDK components and virtual devices.
 
 3. **Mandatory Verification Workflow**:
-   - Before completing tasks, always run in `android-app/`:
-     `./gradlew testDebugUnitTest lintDebug assembleDebug`
-   - When runtime is available, verify app launch using `android run`, inspect tree with `android layout -p`, and capture visual proof via `android screen capture`.
+   - Do not run unbounded combined commands.
+   - Run bounded per-task execution in `android-app/`:
+     - `./gradlew :app:testDebugUnitTest --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
+     - `./gradlew :app:lintDebug --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
+     - `./gradlew :app:assembleDebug -PtelegramDataSource=fake --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
+   - When runtime is available, verify app launch using `android run --apks=...`, inspect tree with `android layout`, and capture visual proof via `android screen capture`.

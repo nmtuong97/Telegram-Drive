@@ -95,25 +95,21 @@ class TransferCoordinator(
                         return@launch
                     }
                     updateState(fileId, TransferState.InProgress(0))
-                    val result = repository.download(fileId)
+                    val result = repository.downloadPagingItem(fileId)
                     if (result != ActionResult.ACCEPTED) {
                         updateState(fileId, TransferState.TransferFailed("Download rejected: $result"))
                         return@launch
                     }
 
-                    repository.library.collect { libraryState ->
+                    repository.transferUpdates.collect { update ->
                         if (!isCurrentGeneration()) {
                             updateState(fileId, TransferState.TransferCancelled)
                             throw CancellationException("Generation invalidated")
                         }
-                        if (libraryState is LibraryState.Content) {
-                            val item = libraryState.items.firstOrNull { it.fileId == fileId }
-                            if (item != null) {
-                                val transferState = item.downloadState.toTransferState()
-                                updateState(fileId, transferState)
-                                if (transferState.isTerminal) {
-                                    throw CancellationException("Terminal state reached: $transferState")
-                                }
+                        if (update.identity.fileId == fileId && isValidIdentity(update.identity)) {
+                            updateState(fileId, update.state)
+                            if (update.state.isTerminal) {
+                                throw CancellationException("Terminal state reached: ${update.state}")
                             }
                         }
                     }

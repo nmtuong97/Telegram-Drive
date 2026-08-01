@@ -17,11 +17,13 @@ interface TelegramRepository : Closeable {
     val diagnostics: StateFlow<DiagnosticsState>
     val authorization: StateFlow<AuthorizationSession>
     val library: StateFlow<LibraryState>
+    val transferUpdates: kotlinx.coroutines.flow.Flow<TransferUpdate>
     fun start()
     fun submit(action: AuthorizationAction): ActionResult
     suspend fun logoutAndReset(): AccountResetResult
     fun loadSavedMessages(limit: Int = 50): ActionResult
     fun download(fileId: Int): ActionResult
+    fun downloadPagingItem(fileId: Int): ActionResult
     fun cancelDownload(fileId: Int): ActionResult
     fun preview(itemId: Long): PreviewTarget?
     suspend fun getSavedMessagesChatId(): Long?

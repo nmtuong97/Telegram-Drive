@@ -1,8 +1,11 @@
 package com.nmtuong.telegramdrive.data
 
 import com.nmtuong.telegramdrive.domain.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
@@ -20,6 +23,8 @@ class TransferCoordinatorTest {
     private class StubRepository : TelegramRepository {
         val libraryState = MutableStateFlow<LibraryState>(LibraryState.Idle)
         override val library: StateFlow<LibraryState> = libraryState
+        val _transferUpdates = MutableSharedFlow<TransferUpdate>(extraBufferCapacity = 64)
+        override val transferUpdates: Flow<TransferUpdate> = _transferUpdates.asSharedFlow()
         override val diagnostics: StateFlow<DiagnosticsState> =
             MutableStateFlow(DiagnosticsState(DataSourceMode.FAKE))
         override val authorization: StateFlow<AuthorizationSession> =
@@ -33,6 +38,10 @@ class TransferCoordinatorTest {
         override suspend fun logoutAndReset(): AccountResetResult = AccountResetResult.Completed
         override fun loadSavedMessages(limit: Int) = ActionResult.ACCEPTED
         override fun download(fileId: Int): ActionResult {
+            downloadedFileIds.add(fileId)
+            return ActionResult.ACCEPTED
+        }
+        override fun downloadPagingItem(fileId: Int): ActionResult {
             downloadedFileIds.add(fileId)
             return ActionResult.ACCEPTED
         }

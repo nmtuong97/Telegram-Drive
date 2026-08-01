@@ -14,17 +14,20 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 
 class RealTelegramRepository(private val gateway: TdLibGateway) : TelegramRepository {
     override val diagnostics = gateway.state
     override val authorization = gateway.authorization
     override val library = gateway.library
+    override val transferUpdates = gateway.transferUpdates
     override fun start() = gateway.start()
     override fun submit(action: AuthorizationAction) = gateway.submit(action)
     override suspend fun logoutAndReset(): AccountResetResult = gateway.logoutAndReset()
     override fun loadSavedMessages(limit: Int) = gateway.loadSavedMessages(limit)
     override fun download(fileId: Int) = gateway.download(fileId)
+    override fun downloadPagingItem(fileId: Int) = gateway.downloadPagingItem(fileId)
     override fun cancelDownload(fileId: Int) = gateway.cancelDownload(fileId)
     override fun preview(itemId: Long) = gateway.preview(itemId)
     override suspend fun getSavedMessagesChatId(): Long? = gateway.getSavedMessagesChatId()
@@ -59,6 +62,8 @@ class FakeTelegramRepository(
     override val authorization: StateFlow<AuthorizationSession> = mutableAuthorization
     private val mutableLibrary = MutableStateFlow<LibraryState>(LibraryState.Idle)
     override val library: StateFlow<LibraryState> = mutableLibrary
+    private val mutableTransferUpdates = kotlinx.coroutines.flow.MutableSharedFlow<TransferUpdate>(extraBufferCapacity = 64)
+    override val transferUpdates: kotlinx.coroutines.flow.Flow<TransferUpdate> = mutableTransferUpdates.asSharedFlow()
 
     override fun start() = Unit
 
@@ -102,9 +107,10 @@ class FakeTelegramRepository(
         return ActionResult.ACCEPTED
     }
 
-    override fun download(fileId: Int): ActionResult {
-        val content = library.value as? LibraryState.Content ?: return ActionResult.INVALID_STATE
-        val item = content.items.firstOrNull { it.fileId == fileId } ?: return ActionResult.INVALID_STATE
+    override fun downloadPagingItem(fileId: Int): ActionResult {
+        val item = (library.value as? LibraryState.Content)?.items?.firstOrNull { it.fileId == fileId }
+            ?: catalog.media.firstOrNull { it.fileId == fileId }
+            ?: return ActionResult.INVALID_STATE
         if (item.downloadState is DownloadState.Downloading) return ActionResult.DUPLICATE
         if (item.downloadState == DownloadState.Complete && item.localPath?.let(::File)?.isFile == true) return ActionResult.DUPLICATE
         val generation = synchronized(lock) {
@@ -112,15 +118,20 @@ class FakeTelegramRepository(
             (downloadGenerations[fileId] ?: 0L) + 1L
         }
         synchronized(lock) { downloadGenerations[fileId] = generation }
+        val identity = TransferIdentity(1L, 1L, fileId)
         updateItem(fileId) { it.copy(downloadState = DownloadState.Downloading(0), localPath = null) }
+        mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.InProgress(0)))
+
         val job = scope.launch {
             delay(downloadStepDelayMillis)
             if (!isCurrentDownload(fileId, generation)) return@launch
             updateItem(fileId) { it.copy(downloadState = DownloadState.Downloading(50)) }
+            mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.InProgress(50)))
             delay(downloadStepDelayMillis)
             if (!isCurrentDownload(fileId, generation)) return@launch
             if (item.kind == MediaKind.ANIMATION) {
                 updateItem(fileId) { it.copy(downloadState = DownloadState.Failed("Simulated download failure"), localPath = null) }
+                mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.TransferFailed("Simulated download failure")))
             } else {
                 filesDirectory.mkdirs()
                 val target = File(filesDirectory, item.name)
@@ -131,6 +142,7 @@ class FakeTelegramRepository(
                 }
                 if (isCurrentDownload(fileId, generation)) {
                     updateItem(fileId) { it.copy(downloadState = DownloadState.Complete, localPath = target.absolutePath) }
+                    mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.Completed, 100, target.absolutePath))
                 }
             }
             synchronized(lock) { downloadJobs.remove(fileId) }
@@ -139,14 +151,21 @@ class FakeTelegramRepository(
         return ActionResult.ACCEPTED
     }
 
+    override fun download(fileId: Int): ActionResult {
+        return downloadPagingItem(fileId)
+    }
+
     override fun cancelDownload(fileId: Int): ActionResult {
         val item = (library.value as? LibraryState.Content)?.items?.firstOrNull { it.fileId == fileId }
+            ?: catalog.media.firstOrNull { it.fileId == fileId }
             ?: return ActionResult.INVALID_STATE
         if (item.downloadState !is DownloadState.Downloading) return ActionResult.INVALID_STATE
+        val identity = TransferIdentity(1L, 1L, fileId)
         synchronized(lock) {
             downloadGenerations[fileId] = (downloadGenerations[fileId] ?: 0L) + 1L
             downloadJobs.remove(fileId)?.cancel()
         }
+        mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.TransferCancelled))
         updateItem(fileId) { it.copy(downloadState = DownloadState.Canceled, localPath = null) }
         return ActionResult.ACCEPTED
     }

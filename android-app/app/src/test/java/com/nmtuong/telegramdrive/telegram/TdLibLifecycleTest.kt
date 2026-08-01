@@ -225,6 +225,7 @@ class TdLibLifecycleTest {
             native = native,
             libraryLoader = NativeLibraryLoader {},
             dispatcher = dispatcher,
+            closeTimeoutMs = 5000L,
         )
         block(gateway, native)
         TdLibJsonGateway.resetClientCountForTest()
@@ -261,6 +262,7 @@ internal class TrackingNative(private val failCreate: Boolean = false) : TdLibNa
 
 internal class FailingSendNative : TdLibNative {
     private var clientCreated = false
+    private var responseSent = false
 
     override fun createClientId(): Int {
         clientCreated = true
@@ -274,8 +276,10 @@ internal class FailingSendNative : TdLibNative {
     }
 
     override fun receive(timeoutSeconds: Double): String? {
-        return if (clientCreated) {
-            """{"@type":"authorizationStateWaitTdlibParameters"}"""
-        } else null
+        if (clientCreated && !responseSent) {
+            responseSent = true
+            return """{"@type":"authorizationStateWaitTdlibParameters"}"""
+        }
+        return null
     }
 }

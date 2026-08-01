@@ -12,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
@@ -40,6 +41,8 @@ class TdLibJsonGateway internal constructor(
     private val native: TdLibNative = JsonTdLibNative,
     private val libraryLoader: NativeLibraryLoader = NativeLibraryLoader { System.loadLibrary("tdjsonjava") },
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val closeTimeoutMs: Long = CLOSE_TIMEOUT_MS,
+    private val logoutTimeoutMs: Long = LOGOUT_TIMEOUT_MS,
 ) : TdLibGateway {
     private val lock = Any()
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -75,6 +78,8 @@ class TdLibJsonGateway internal constructor(
     override val authorization: StateFlow<AuthorizationSession> = mutableAuthorization.asStateFlow()
     private val mutableLibrary = MutableStateFlow<LibraryState>(LibraryState.Idle)
     override val library: StateFlow<LibraryState> = mutableLibrary.asStateFlow()
+    private val mutableTransferUpdates = kotlinx.coroutines.flow.MutableSharedFlow<TransferUpdate>(extraBufferCapacity = 64)
+    override val transferUpdates: kotlinx.coroutines.flow.Flow<TransferUpdate> = mutableTransferUpdates.asSharedFlow()
 
     override fun start() {
         synchronized(lock) {
@@ -117,7 +122,7 @@ class TdLibJsonGateway internal constructor(
             }
         } catch (error: Throwable) {
             synchronized(lock) {
-                if (lifecycle != GatewayLifecycle.CLOSING && lifecycle != GatewayLifecycle.CLOSED) {
+                if (lifecycle != GatewayLifecycle.CLOSING && lifecycle != GatewayLifecycle.CLOSED && lifecycle != GatewayLifecycle.ABORTED) {
                     transitionLocked(GatewayLifecycle.FAILED, safeMessage(error))
                     mutableAuthorization.value = AuthorizationSession(
                         state = AuthorizationState.Other("failed"),
@@ -309,7 +314,7 @@ class TdLibJsonGateway internal constructor(
      */
     override suspend fun logoutAndReset(): AccountResetResult {
         val job = synchronized(lock) {
-            if (lifecycle == GatewayLifecycle.CLOSING || lifecycle == GatewayLifecycle.CLOSED || lifecycle == GatewayLifecycle.ABORTED) {
+            if (lifecycle != GatewayLifecycle.RUNNING) {
                 return AccountResetResult.InvalidState
             }
             if (resetJob?.isActive == true) return AccountResetResult.AlreadyRunning
@@ -331,7 +336,7 @@ class TdLibJsonGateway internal constructor(
 
                     // Step 2: Send logOut (network required)
                     val logoutResult = runCatching {
-                        withTimeout(LOGOUT_TIMEOUT_MS) {
+                        withTimeout(logoutTimeoutMs) {
                             execute(buildJsonObject { put("@type", "logOut") })
                         }
                     }
@@ -357,7 +362,7 @@ class TdLibJsonGateway internal constructor(
 
                     // Step 3: Wait for TDLib to confirm authorizationStateClosed
                     val closeResult = runCatching {
-                        withTimeout(CLOSE_TIMEOUT_MS) {
+                        withTimeout(closeTimeoutMs) {
                             authorization.first { it.state == AuthorizationState.Closed }
                         }
                     }
@@ -369,11 +374,15 @@ class TdLibJsonGateway internal constructor(
                     }
 
                     // Step 4: TDLib confirmed Closed — safe to delete local data
-                    databaseDirectory.deleteRecursively()
-                    filesDirectory.deleteRecursively()
-                    encryptionManager?.clearKey()
+                    val dbDeleted = if (databaseDirectory.exists()) databaseDirectory.deleteRecursively() else true
+                    val filesDeleted = if (filesDirectory.exists()) filesDirectory.deleteRecursively() else true
 
-                    mutableResetResult.value = AccountResetResult.Completed
+                    if (dbDeleted && filesDeleted) {
+                        encryptionManager?.clearKey()
+                        mutableResetResult.value = AccountResetResult.Completed
+                    } else {
+                        mutableResetResult.value = AccountResetResult.Failed("Local file deletion failed. Encryption key preserved.")
+                    }
                 } catch (e: CancellationException) {
                     mutableResetResult.value = AccountResetResult.Cancelled
                     throw e
@@ -585,10 +594,7 @@ class TdLibJsonGateway internal constructor(
 
     internal fun handleResponseForTest(raw: String) = handleResponse(raw)
 
-    override fun download(fileId: Int): ActionResult {
-        val item = (mutableLibrary.value as? LibraryState.Content)?.items?.firstOrNull { it.fileId == fileId }
-            ?: return ActionResult.INVALID_STATE
-        if (item.downloadState == DownloadState.Complete && item.localPath?.let(::File)?.isFile == true) return ActionResult.DUPLICATE
+    override fun downloadPagingItem(fileId: Int): ActionResult {
         val request = synchronized(lock) {
             if (fileId in pendingCancellations || !pendingDownloads.add(fileId)) return ActionResult.DUPLICATE
             requestEnvelope("download-$fileId", buildJsonObject {
@@ -599,8 +605,11 @@ class TdLibJsonGateway internal constructor(
             }).also { pendingDownloadRequests[fileId] = it.string("@extra").orEmpty() }
         }
         send(request)
-        updateItem(fileId) { it.copy(downloadState = DownloadState.Downloading(0)) }
         return ActionResult.ACCEPTED
+    }
+
+    override fun download(fileId: Int): ActionResult {
+        return downloadPagingItem(fileId)
     }
 
     override fun cancelDownload(fileId: Int): ActionResult {
@@ -613,6 +622,10 @@ class TdLibJsonGateway internal constructor(
             }).also { pendingCancelRequests[fileId] = it.string("@extra").orEmpty() }
         }
         send(request)
+        val identity = TransferIdentity(1L, 1L, fileId)
+        mutableTransferUpdates.tryEmit(
+            TransferUpdate(identity = identity, state = TransferState.TransferCancelled)
+        )
         updateItem(fileId) { it.copy(downloadState = DownloadState.Canceled, localPath = null) }
         return ActionResult.ACCEPTED
     }
@@ -630,6 +643,20 @@ class TdLibJsonGateway internal constructor(
             pendingDownloads.remove(fileId)
             pendingDownloadRequests.remove(fileId)
         }
+        val identity = TransferIdentity(1L, 1L, fileId)
+        val state = if (complete && path.isNotBlank() && File(path).isFile) {
+            TransferState.Completed
+        } else {
+            TransferState.InProgress(percent)
+        }
+        mutableTransferUpdates.tryEmit(
+            TransferUpdate(
+                identity = identity,
+                state = state,
+                percent = percent,
+                localPath = path.takeIf { complete && File(it).isFile },
+            )
+        )
         updateItem(fileId) {
             if (complete && path.isNotBlank() && File(path).isFile) it.copy(downloadState = DownloadState.Complete, localPath = path)
             else it.copy(downloadState = DownloadState.Downloading(percent))
@@ -811,7 +838,7 @@ class TdLibJsonGateway internal constructor(
                     return@launch
                 }
 
-                val completed = withTimeoutOrNull(CLOSE_TIMEOUT_MS) {
+                val completed = withTimeoutOrNull(closeTimeoutMs) {
                     while (synchronized(lock) { lifecycle != GatewayLifecycle.CLOSED }) {
                         delay(50)
                     }
@@ -820,7 +847,7 @@ class TdLibJsonGateway internal constructor(
 
                 if (completed == null) {
                     // Timeout: transition to ABORTED (do NOT call finalizeClose or claim CLOSED)
-                    abandonClientLocalResources("TDLib close timed out after ${CLOSE_TIMEOUT_MS}ms")
+                    abandonClientLocalResources("TDLib close timed out after ${closeTimeoutMs}ms")
                 }
                 scope.cancel()
             }

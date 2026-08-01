@@ -15,6 +15,7 @@ class DownloadCoordinatorTest {
     private class FakeRepo : TelegramRepository {
         val libraryState = MutableStateFlow<LibraryState>(LibraryState.Idle)
         override val library: StateFlow<LibraryState> = libraryState
+        override val transferUpdates: kotlinx.coroutines.flow.Flow<TransferUpdate> = kotlinx.coroutines.flow.emptyFlow()
         override val diagnostics = MutableStateFlow(DiagnosticsState(dataSource = DataSourceMode.FAKE, authorizationState = AuthorizationState.Ready))
         override val authorization = MutableStateFlow(AuthorizationSession(AuthorizationState.Ready))
 
@@ -33,6 +34,11 @@ class DownloadCoordinatorTest {
             error("Not implemented")
 
         override fun download(fileId: Int): ActionResult {
+            startedDownloads.add(fileId)
+            return ActionResult.ACCEPTED
+        }
+
+        override fun downloadPagingItem(fileId: Int): ActionResult {
             startedDownloads.add(fileId)
             return ActionResult.ACCEPTED
         }
