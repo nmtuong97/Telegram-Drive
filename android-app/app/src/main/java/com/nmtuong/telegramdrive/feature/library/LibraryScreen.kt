@@ -111,14 +111,14 @@ fun LibraryScreen(viewModel: LibraryViewModel, onPreview: (PreviewTarget) -> Uni
                             ) { index ->
                                 val item = lazyPagingItems[index]
                                 if (item != null) {
-                                    val transferState = transferStates[item.fileId] ?: item.downloadState.toTransferState()
+                                    val transferState = transferStates[item.fileId] ?: item.downloadState.toTransferState(item.localPath)
                                     MediaCard(
                                         item = item,
                                         transferState = transferState,
                                         onDownload = { viewModel.download(item.fileId) },
                                         onCancel = { viewModel.cancel(item.fileId) },
                                         onPreview = {
-                                            viewModel.preview(item.id)?.let(onPreview)
+                                            viewModel.previewPagingItem(item.id, item.kind, item.fileId)?.let(onPreview)
                                         },
                                     )
                                 }
@@ -243,14 +243,15 @@ private fun MediaCard(
     }
 }
 
-private fun DownloadState.toTransferState(): TransferState = when (this) {
+private fun DownloadState.toTransferState(localPath: String?): TransferState = when (this) {
     DownloadState.NotDownloaded -> TransferState.NotStarted
     is DownloadState.Downloading -> TransferState.InProgress(percent)
-    DownloadState.Complete -> TransferState.Completed
+    DownloadState.Complete -> TransferState.Completed(localPath ?: "") 
     DownloadState.Canceled -> TransferState.TransferCancelled
     is DownloadState.Failed -> TransferState.TransferFailed(reason)
     DownloadState.Unavailable -> TransferState.Unavailable
 }
+
 
 private fun formatBytes(bytes: Long): String {
     if (bytes < 1024) return "$bytes B"

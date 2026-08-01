@@ -12,6 +12,9 @@ import androidx.paging.PagingSource
  * - Repository may import Paging (data layer).
  * - Repository does NOT expose TdLib types.
  * - ViewModel/UI consume this interface only.
+ *
+ * CP3: downloadPagingItem(fileId) is kept for backward compatibility with
+ * coordinator internals; external callers should prefer downloadPagingItem(TransferRequest).
  */
 interface TelegramRepository : Closeable {
     val diagnostics: StateFlow<DiagnosticsState>
@@ -25,7 +28,20 @@ interface TelegramRepository : Closeable {
     fun download(fileId: Int): ActionResult
     fun downloadPagingItem(fileId: Int): ActionResult
     fun cancelDownload(fileId: Int): ActionResult
+
+    /**
+     * CP6: Preview from Paging item snapshot + TransferCoordinator localPath.
+     * Does not look up item in legacy LibraryState.
+     */
+    fun previewPagingItem(
+        itemId: Long,
+        mediaKind: MediaKind,
+        localPath: String,
+    ): PreviewTarget?
+
+    /** Legacy preview — looks up item in LibraryState.Content. Used by P1 compat. */
     fun preview(itemId: Long): PreviewTarget?
+
     suspend fun getSavedMessagesChatId(): Long?
     suspend fun getAvailableSources(): List<FileSource>
 

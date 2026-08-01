@@ -2,6 +2,7 @@ package com.nmtuong.telegramdrive.bootstrap
 
 import android.content.Context
 import com.nmtuong.telegramdrive.BuildConfig
+import com.nmtuong.telegramdrive.data.AccountSessionIdentityProvider
 import com.nmtuong.telegramdrive.data.FakeTelegramRepository
 import com.nmtuong.telegramdrive.data.RealTelegramRepository
 import com.nmtuong.telegramdrive.data.TelegramRepository
@@ -13,9 +14,18 @@ import com.nmtuong.telegramdrive.telegram.TdLibJsonGateway
 import com.nmtuong.telegramdrive.security.TelegramApiConfiguration
 import java.io.Closeable
 
+/**
+ * CP7+CP8: AppContainer owns AccountSessionIdentityProvider.
+ * - Provider starts with null identity.
+ * - Gateway receives provider lambdas for current accountId/generation.
+ * - ViewModel receives provider for coordinator/pager identity.
+ * - Provider updated via authorization observation in MainActivity/Application.
+ */
 class AppContainer private constructor(
   val telegramRepository: TelegramRepository,
   val sampleCatalog: FakeTelegramCatalog,
+  /** CP7: Shared identity provider — owned here, used by repo, coordinator, ViewModel. */
+  val identityProvider: AccountSessionIdentityProvider,
 ) : Closeable {
   fun start() = telegramRepository.start()
   fun logout(): ActionResult = telegramRepository.submit(AuthorizationAction.Logout)
@@ -25,21 +35,31 @@ class AppContainer private constructor(
   companion object {
     fun create(context: Context): AppContainer {
       val catalog = FakeTelegramCatalog.stable()
-      val repository = if (BuildConfig.TELEGRAM_DATA_SOURCE == DataSourceMode.FAKE.id) {
+      // CP7: Provider starts null — no hardcoded (1L,1L)
+      val identityProvider = AccountSessionIdentityProvider()
+
+      val repository: TelegramRepository = if (BuildConfig.TELEGRAM_DATA_SOURCE == DataSourceMode.FAKE.id) {
+        // CP7: Fake mode — initialize with catalog account ID explicitly
+        identityProvider.initializeFake(catalog.account.id)
         FakeTelegramRepository(
           catalog,
           context.cacheDir.resolve("fake-media"),
           videoBytes = { context.assets.open("fake-video.mp4").use { it.readBytes() } },
+          identityProvider = identityProvider,
         )
       } else {
+        // CP7: Real mode — gateway receives identity provider lambdas
+        // Account ID is set after authorization Ready + getMe; generation from provider
         RealTelegramRepository(
           TdLibJsonGateway(
             context.applicationContext,
             TelegramApiConfiguration(BuildConfig.TELEGRAM_API_ID, BuildConfig.TELEGRAM_API_HASH),
+            currentAccountId = { identityProvider.accountId ?: 0L },
+            currentDatabaseGeneration = { identityProvider.databaseGeneration ?: 1L },
           ),
         )
       }
-      return AppContainer(repository, catalog)
+      return AppContainer(repository, catalog, identityProvider)
     }
   }
 }

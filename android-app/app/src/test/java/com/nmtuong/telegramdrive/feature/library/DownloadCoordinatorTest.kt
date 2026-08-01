@@ -49,6 +49,7 @@ class DownloadCoordinatorTest {
         }
 
         override fun preview(itemId: Long): PreviewTarget? = null
+        override fun previewPagingItem(itemId: Long, mediaKind: com.nmtuong.telegramdrive.domain.MediaKind, localPath: String): PreviewTarget? = null
         override fun close() {}
     }
 

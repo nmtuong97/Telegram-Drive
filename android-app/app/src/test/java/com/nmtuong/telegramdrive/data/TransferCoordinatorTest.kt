@@ -50,6 +50,7 @@ class TransferCoordinatorTest {
             return ActionResult.ACCEPTED
         }
         override fun preview(itemId: Long): PreviewTarget? = null
+        override fun previewPagingItem(itemId: Long, mediaKind: com.nmtuong.telegramdrive.domain.MediaKind, localPath: String): PreviewTarget? = null
         override suspend fun getSavedMessagesChatId(): Long? = 1L
         override suspend fun getAvailableSources(): List<FileSource> = listOf(FileSource(1L, "Saved Messages", true))
         override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage =
@@ -239,7 +240,7 @@ class TransferCoordinatorTest {
 
     @Test
     fun `isTerminal is true for all terminal states`() {
-        assertTrue(TransferState.Completed.isTerminal)
+        assertTrue(TransferState.Completed("/tmp/file.jpg").isTerminal)
         assertTrue(TransferState.TransferCancelled.isTerminal)
         assertTrue(TransferState.TransferFailed("err").isTerminal)
         assertTrue(TransferState.Unavailable.isTerminal)

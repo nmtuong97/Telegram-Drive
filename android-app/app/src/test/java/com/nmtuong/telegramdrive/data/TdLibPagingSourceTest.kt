@@ -35,6 +35,7 @@ class TdLibPagingSourceTest {
         override fun downloadPagingItem(fileId: Int) = ActionResult.ACCEPTED
         override fun cancelDownload(fileId: Int) = ActionResult.ACCEPTED
         override fun preview(itemId: Long): PreviewTarget? = null
+        override fun previewPagingItem(itemId: Long, mediaKind: com.nmtuong.telegramdrive.domain.MediaKind, localPath: String): PreviewTarget? = null
         override suspend fun getSavedMessagesChatId(): Long? = 10L
         override suspend fun getAvailableSources(): List<FileSource> = listOf(FileSource(10L, "Saved Messages", true))
         override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> =

@@ -123,18 +123,54 @@ data class TransferIdentity(
   val fileId: Int,
 )
 
+/**
+ * Context-rich transfer request replacing the ambiguous fileId-only API.
+ *
+ * CP3: UI/ViewModel assembles this and passes to coordinator.
+ * Repository/gateway does not need item to be in legacy LibraryState.
+ */
+data class TransferRequest(
+  val identity: TransferIdentity,
+  val messageId: Long,
+  val sourceId: Long,
+  val fileId: Int,
+  val mediaKind: MediaKind,
+  val expectedSizeBytes: Long = 0L,
+  val knownLocalPath: String? = null,
+)
+
 /** Terminal and non-terminal states for a coordinated transfer. */
 sealed interface TransferState {
   data object NotStarted : TransferState
   data object Queued : TransferState
   data class InProgress(val percent: Int) : TransferState
-  data object Completed : TransferState
+  /** CP4: Completed always carries a valid localPath. */
+  data class Completed(val localPath: String) : TransferState
   data class TransferFailed(val reason: String) : TransferState
   data object TransferCancelled : TransferState
+  /** Terminal — file permanently unavailable (deleted, unsupported, etc.) */
   data object Unavailable : TransferState
 
   val isTerminal: Boolean
     get() = this is Completed || this is TransferFailed || this is TransferCancelled || this is Unavailable
+}
+
+/**
+ * CP4: TransferSnapshot is the single source of truth for coordinator state.
+ *
+ * - Completed always has a non-null localPath.
+ * - Failed always has a safeError.
+ * - attemptId distinguishes retry attempts; retention timer checks this before clearing.
+ */
+data class TransferSnapshot(
+  val identity: TransferIdentity,
+  val state: TransferState,
+  val progress: Int = 0,
+  val localPath: String? = null,
+  val safeError: String? = null,
+  val attemptId: Long = 0L,
+) {
+  val isTerminal: Boolean get() = state.isTerminal
 }
 
 /**
@@ -155,4 +191,20 @@ sealed interface AccountResetResult {
   data object Cancelled : AccountResetResult
   data object AlreadyRunning : AccountResetResult
   data object InvalidState : AccountResetResult
+}
+
+/**
+ * CP10: Observable reset progress states.
+ * UI shows progress bar and failure/retry instead of silently blocking.
+ */
+sealed interface ResetProgress {
+  data object Idle : ResetProgress
+  data object CancellingTransfers : ResetProgress
+  data object LoggingOut : ResetProgress
+  data object WaitingForClosed : ResetProgress
+  data object DeletingDatabase : ResetProgress
+  data object DeletingFiles : ResetProgress
+  data object DeletingKey : ResetProgress
+  data object Completed : ResetProgress
+  data class Failed(val reason: String, val retryable: Boolean = true) : ResetProgress
 }

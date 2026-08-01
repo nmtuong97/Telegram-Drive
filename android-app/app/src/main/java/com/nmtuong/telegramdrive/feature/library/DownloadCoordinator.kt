@@ -1,7 +1,9 @@
 package com.nmtuong.telegramdrive.feature.library
 
+import com.nmtuong.telegramdrive.data.AccountSessionIdentityProvider
 import com.nmtuong.telegramdrive.data.TelegramRepository
 import com.nmtuong.telegramdrive.data.TransferCoordinator
+import com.nmtuong.telegramdrive.domain.AccountSessionIdentity
 import com.nmtuong.telegramdrive.domain.TransferIdentity
 import com.nmtuong.telegramdrive.domain.TransferState
 import kotlinx.coroutines.CoroutineScope
@@ -11,16 +13,19 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 
 /**
- * Adapter that exposes [TransferCoordinator] to the feature layer.
+ * CP8: Adapter that exposes [TransferCoordinator] to the feature layer.
  *
- * Single source of truth is [TransferCoordinator.transferStates].
- * The previous [DownloadCoordinator._activeDownloads] second map has been removed.
+ * - CP7: Uses AccountSessionIdentityProvider — no hardcoded accountId=0L or databaseGeneration=1L.
+ * - CP8: Coordinator is Closeable and cleared on ViewModel.onCleared().
+ * - Single source of truth is [TransferCoordinator.snapshots] / [TransferCoordinator.transferStates].
+ * - The previous second _activeDownloads map has been removed.
  *
- * Lifecycle: scope is the ViewModel's scope (cleared on ViewModel.onCleared).
+ * Lifecycle: coordinator is closed when ViewModel is cleared (via LibraryViewModel.onCleared).
  */
 class DownloadCoordinator(
     repository: TelegramRepository,
     scope: CoroutineScope,
+    /** CP7: Use explicit identity values from provider, not defaults. */
     private val accountId: Long = 0L,
     private val databaseGeneration: Long = 1L,
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -52,5 +57,16 @@ class DownloadCoordinator(
 
     fun clear() {
         coordinator.clear()
+    }
+
+    /** CP8: Called from ViewModel.onCleared() to release coordinator scope. */
+    fun close() {
+        coordinator.close()
+    }
+
+    /** CP6: Get localPath for a completed transfer (for Paging preview). */
+    fun getCompletedLocalPath(fileId: Int): String? {
+        val snap = coordinator.getSnapshot(fileId) ?: return null
+        return (snap.state as? TransferState.Completed)?.localPath
     }
 }

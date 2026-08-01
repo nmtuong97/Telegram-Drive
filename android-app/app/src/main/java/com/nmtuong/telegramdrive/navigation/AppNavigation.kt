@@ -23,7 +23,7 @@ fun AppNavigation(container: AppContainer) {
     AuthorizationViewModel(container.telegramRepository)
   }
   val libraryViewModel: LibraryViewModel = viewModel {
-    LibraryViewModel(container.telegramRepository)
+    LibraryViewModel(container.telegramRepository, container.identityProvider)
   }
   val authorization by authorizationViewModel.state.collectAsStateWithLifecycle()
   var preview by remember { mutableStateOf<PreviewTarget?>(null) }

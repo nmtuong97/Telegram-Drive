@@ -17,6 +17,13 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 
+/**
+ * LibraryViewModel tests — updated for CP2 (authorization-driven source loading).
+ *
+ * FakeTelegramRepository starts at WaitingForPhoneNumber.
+ * Sources are only loaded after AuthorizationState.Ready.
+ * Tests drive the fake through authorization before checking sources.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class LibraryViewModelTest {
 
@@ -32,12 +39,29 @@ class LibraryViewModelTest {
         Dispatchers.resetMain()
     }
 
+    /** Helper: drive FakeTelegramRepository to Ready via phone/code/password flow */
+    private fun FakeTelegramRepository.reachReady() {
+        submit(AuthorizationAction.SubmitPhone("+1234567890"))
+        submit(AuthorizationAction.SubmitCode("12345"))
+        submit(AuthorizationAction.SubmitPassword("password"))
+        check(authorization.value.state == AuthorizationState.Ready) {
+            "Expected Ready but was ${authorization.value.state}"
+        }
+    }
+
     @Test
-    fun `loadSources loads available sources and defaults to Saved Messages`() = runTest {
+    fun `loadSources loads available sources and defaults to Saved Messages after Ready`() = runTest {
         val catalog = FakeTelegramCatalog.stable()
         val repo = FakeTelegramRepository(catalog)
         val viewModel = LibraryViewModel(repo)
 
+        // CP2: Sources NOT loaded yet — not Ready
+        runCurrent()
+        assertEquals(0, viewModel.sources.value.size)
+        assertNull(viewModel.selectedSourceId.value)
+
+        // Drive to Ready — ViewModel observes and loads sources
+        repo.reachReady()
         runCurrent()
 
         assertEquals(3, viewModel.sources.value.size)
@@ -50,6 +74,7 @@ class LibraryViewModelTest {
         val repo = FakeTelegramRepository(catalog)
         val viewModel = LibraryViewModel(repo)
 
+        repo.reachReady()
         runCurrent()
 
         viewModel.selectSource(11L) // Design Assets
@@ -64,6 +89,7 @@ class LibraryViewModelTest {
         val repo = FakeTelegramRepository(catalog)
         val viewModel = LibraryViewModel(repo)
 
+        repo.reachReady()
         runCurrent()
 
         viewModel.download(100)
@@ -77,5 +103,24 @@ class LibraryViewModelTest {
 
         val stateAfterCancel = viewModel.transferStates.value[100]
         assertTrue(stateAfterCancel == null || stateAfterCancel.isTerminal)
+    }
+
+    @Test
+    fun `sources cleared on logout`() = runTest {
+        val catalog = FakeTelegramCatalog.stable()
+        val repo = FakeTelegramRepository(catalog)
+        val viewModel = LibraryViewModel(repo)
+
+        repo.reachReady()
+        runCurrent()
+
+        assertEquals(3, viewModel.sources.value.size)
+
+        // Logout — sources should be cleared
+        viewModel.logout()
+        runCurrent()
+
+        assertEquals(0, viewModel.sources.value.size)
+        assertNull(viewModel.selectedSourceId.value)
     }
 }

@@ -43,6 +43,9 @@ class TdLibJsonGateway internal constructor(
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val closeTimeoutMs: Long = CLOSE_TIMEOUT_MS,
     private val logoutTimeoutMs: Long = LOGOUT_TIMEOUT_MS,
+    /** CP7: Provides current account identity; injected to remove hardcoded (1L,1L). */
+    private val currentAccountId: () -> Long = { 0L },
+    private val currentDatabaseGeneration: () -> Long = { 1L },
 ) : TdLibGateway {
     private val lock = Any()
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -622,7 +625,8 @@ class TdLibJsonGateway internal constructor(
             }).also { pendingCancelRequests[fileId] = it.string("@extra").orEmpty() }
         }
         send(request)
-        val identity = TransferIdentity(1L, 1L, fileId)
+        // CP7: Use injected account identity
+        val identity = TransferIdentity(currentAccountId(), currentDatabaseGeneration(), fileId)
         mutableTransferUpdates.tryEmit(
             TransferUpdate(identity = identity, state = TransferState.TransferCancelled)
         )
@@ -643,9 +647,11 @@ class TdLibJsonGateway internal constructor(
             pendingDownloads.remove(fileId)
             pendingDownloadRequests.remove(fileId)
         }
-        val identity = TransferIdentity(1L, 1L, fileId)
+        // CP7: Use injected account identity instead of hardcoded (1L, 1L)
+        val identity = TransferIdentity(currentAccountId(), currentDatabaseGeneration(), fileId)
         val state = if (complete && path.isNotBlank() && File(path).isFile) {
-            TransferState.Completed
+            // CP4: Completed carries localPath
+            TransferState.Completed(path)
         } else {
             TransferState.InProgress(percent)
         }
