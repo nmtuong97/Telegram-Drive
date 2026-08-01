@@ -17,12 +17,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class RealTelegramRepository(private val gateway: TdLibGateway) : TelegramRepository {
     override val diagnostics = gateway.state
     override val authorization = gateway.authorization
     override val library = gateway.library
+    override val resetProgress = gateway.resetProgress
     override val transferUpdates = gateway.transferUpdates
     override fun start() = gateway.start()
     override fun submit(action: AuthorizationAction) = gateway.submit(action)
@@ -62,7 +64,7 @@ class FakeTelegramRepository(
     private val videoBytes: () -> ByteArray = { ByteArray(0) },
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val downloadStepDelayMillis: Long = 150,
-    private val identityProvider: AccountSessionIdentityProvider = AccountSessionIdentityProvider(),
+    val identityProvider: AccountSessionIdentityProvider = AccountSessionIdentityProvider(),
 ) : TelegramRepository {
     private val lock = Any()
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -80,6 +82,8 @@ class FakeTelegramRepository(
     override val authorization: StateFlow<AuthorizationSession> = mutableAuthorization
     private val mutableLibrary = MutableStateFlow<LibraryState>(LibraryState.Idle)
     override val library: StateFlow<LibraryState> = mutableLibrary
+    private val mutableResetProgress = MutableStateFlow<ResetProgress>(ResetProgress.Idle)
+    override val resetProgress: StateFlow<ResetProgress> = mutableResetProgress.asStateFlow()
     private val mutableTransferUpdates = kotlinx.coroutines.flow.MutableSharedFlow<TransferUpdate>(extraBufferCapacity = 64)
     override val transferUpdates: kotlinx.coroutines.flow.Flow<TransferUpdate> = mutableTransferUpdates.asSharedFlow()
 
@@ -113,17 +117,21 @@ class FakeTelegramRepository(
     }
 
     override suspend fun logoutAndReset(): AccountResetResult {
-        // CP6: Reset ordering for Fake Telegram Repository
-        // 1. Cancel active transfers while tracking exists
+        // CP6: Atomic Reset state machine for Fake Repository
+        mutableResetProgress.value = ResetProgress.BlockingTransfers
+        mutableResetProgress.value = ResetProgress.CancellingTransfers
         cancelDownloadsAndClearFiles()
-        // 2. Invalidate generation
+        mutableResetProgress.value = ResetProgress.InvalidatingGeneration
         identityProvider.invalidateGeneration()
-        // 3. Update auth state to closed
+        mutableResetProgress.value = ResetProgress.LoggingOut
+        mutableResetProgress.value = ResetProgress.WaitingForClosed
         mutableAuthorization.value = AuthorizationSession(AuthorizationState.Closed)
         mutableDiagnostics.value = mutableDiagnostics.value.copy(authorizationState = AuthorizationState.Closed)
         mutableLibrary.value = LibraryState.Idle
-        // 4. Clear identity
+        mutableResetProgress.value = ResetProgress.DeletingFiles
+        mutableResetProgress.value = ResetProgress.ClearingIdentity
         identityProvider.clear()
+        mutableResetProgress.value = ResetProgress.Completed
         return AccountResetResult.Completed
     }
 
@@ -153,6 +161,7 @@ class FakeTelegramRepository(
     }
 
     private fun downloadInternal(fileId: Int, identity: TransferIdentity): ActionResult {
+        if (resetProgress.value != ResetProgress.Idle) return ActionResult.INVALID_STATE
         val item = (library.value as? LibraryState.Content)?.items?.firstOrNull { it.fileId == fileId }
             ?: catalog.media.firstOrNull { it.fileId == fileId }
             ?: return ActionResult.INVALID_STATE
@@ -194,7 +203,6 @@ class FakeTelegramRepository(
                 }
             } catch (e: CancellationException) {
                 mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.TransferCancelled))
-                throw e
             } finally {
                 synchronized(lock) { downloadJobs.remove(fileId) }
             }

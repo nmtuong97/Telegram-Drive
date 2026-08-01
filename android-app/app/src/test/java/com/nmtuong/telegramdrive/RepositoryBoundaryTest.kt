@@ -39,6 +39,7 @@ private class RecordingGateway : TdLibGateway {
     var closes = 0
     override val authorization: StateFlow<AuthorizationSession> = MutableStateFlow(AuthorizationSession())
     override val library: StateFlow<LibraryState> = MutableStateFlow(LibraryState.Idle)
+    override val resetProgress: StateFlow<ResetProgress> = MutableStateFlow(ResetProgress.Idle)
     override val transferUpdates: kotlinx.coroutines.flow.Flow<TransferUpdate> = kotlinx.coroutines.flow.emptyFlow()
     override fun start() { starts++ }
     override fun submit(action: AuthorizationAction) = ActionResult.ACCEPTED

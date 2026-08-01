@@ -54,6 +54,7 @@ class AppContainer private constructor(
           TdLibJsonGateway(
             context.applicationContext,
             TelegramApiConfiguration(BuildConfig.TELEGRAM_API_ID, BuildConfig.TELEGRAM_API_HASH),
+            identityProvider = identityProvider,
             currentAccountId = { identityProvider.accountId ?: 0L },
             currentDatabaseGeneration = { identityProvider.databaseGeneration ?: 1L },
           ),

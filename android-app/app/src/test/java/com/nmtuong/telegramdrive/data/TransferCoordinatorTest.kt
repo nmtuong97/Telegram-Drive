@@ -23,6 +23,7 @@ class TransferCoordinatorTest {
     private class StubRepository : TelegramRepository {
         val libraryState = MutableStateFlow<LibraryState>(LibraryState.Idle)
         override val library: StateFlow<LibraryState> = libraryState
+        override val resetProgress: StateFlow<ResetProgress> = MutableStateFlow(ResetProgress.Idle)
         val _transferUpdates = MutableSharedFlow<TransferUpdate>(extraBufferCapacity = 64)
         override val transferUpdates: Flow<TransferUpdate> = _transferUpdates.asSharedFlow()
         override val diagnostics: StateFlow<DiagnosticsState> =

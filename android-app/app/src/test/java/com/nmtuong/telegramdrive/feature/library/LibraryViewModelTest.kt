@@ -52,8 +52,8 @@ class LibraryViewModelTest {
     @Test
     fun `loadSources loads available sources and defaults to Saved Messages after Ready`() = runTest {
         val catalog = FakeTelegramCatalog.stable()
-        val repo = FakeTelegramRepository(catalog)
-        val viewModel = LibraryViewModel(repo)
+        val repo = FakeTelegramRepository(catalog, dispatcher = testDispatcher)
+        val viewModel = LibraryViewModel(repo, repo.identityProvider)
 
         // CP2: Sources NOT loaded yet — not Ready
         runCurrent()
@@ -66,13 +66,14 @@ class LibraryViewModelTest {
 
         assertEquals(3, viewModel.sources.value.size)
         assertEquals(10L, viewModel.selectedSourceId.value) // Saved Messages has ID 10
+        repo.close()
     }
 
     @Test
     fun `selectSource updates selectedSourceId`() = runTest {
         val catalog = FakeTelegramCatalog.stable()
-        val repo = FakeTelegramRepository(catalog)
-        val viewModel = LibraryViewModel(repo)
+        val repo = FakeTelegramRepository(catalog, dispatcher = testDispatcher)
+        val viewModel = LibraryViewModel(repo, repo.identityProvider)
 
         repo.reachReady()
         runCurrent()
@@ -81,13 +82,14 @@ class LibraryViewModelTest {
         runCurrent()
 
         assertEquals(11L, viewModel.selectedSourceId.value)
+        repo.close()
     }
 
     @Test
     fun `download and cancel delegate to coordinator`() = runTest {
         val catalog = FakeTelegramCatalog.stable()
-        val repo = FakeTelegramRepository(catalog)
-        val viewModel = LibraryViewModel(repo)
+        val repo = FakeTelegramRepository(catalog, dispatcher = testDispatcher)
+        val viewModel = LibraryViewModel(repo, repo.identityProvider)
 
         repo.reachReady()
         runCurrent()
@@ -103,13 +105,14 @@ class LibraryViewModelTest {
 
         val stateAfterCancel = viewModel.transferStates.value[100]
         assertTrue(stateAfterCancel == null || stateAfterCancel.isTerminal)
+        repo.close()
     }
 
     @Test
     fun `sources cleared on logout`() = runTest {
         val catalog = FakeTelegramCatalog.stable()
-        val repo = FakeTelegramRepository(catalog)
-        val viewModel = LibraryViewModel(repo)
+        val repo = FakeTelegramRepository(catalog, dispatcher = testDispatcher)
+        val viewModel = LibraryViewModel(repo, repo.identityProvider)
 
         repo.reachReady()
         runCurrent()
@@ -122,5 +125,6 @@ class LibraryViewModelTest {
 
         assertEquals(0, viewModel.sources.value.size)
         assertNull(viewModel.selectedSourceId.value)
+        repo.close()
     }
 }

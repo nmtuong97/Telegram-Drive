@@ -15,6 +15,7 @@ class DownloadCoordinatorTest {
     private class FakeRepo : TelegramRepository {
         val libraryState = MutableStateFlow<LibraryState>(LibraryState.Idle)
         override val library: StateFlow<LibraryState> = libraryState
+        override val resetProgress: StateFlow<ResetProgress> = MutableStateFlow(ResetProgress.Idle)
         override val transferUpdates: kotlinx.coroutines.flow.Flow<TransferUpdate> = kotlinx.coroutines.flow.emptyFlow()
         override val diagnostics = MutableStateFlow(DiagnosticsState(dataSource = DataSourceMode.FAKE, authorizationState = AuthorizationState.Ready))
         override val authorization = MutableStateFlow(AuthorizationSession(AuthorizationState.Ready))

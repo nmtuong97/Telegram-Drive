@@ -65,13 +65,18 @@ class TransferCoordinator(
     private val attemptMap = mutableMapOf<Int, Long>()
     private val lock = Any()
 
+    @Volatile
+    private var closed = false
+
     init {
-        // CP1: Session-scoped collector active before any download requests arrive
-        scope.launch {
+        // CP1+CP2: Collector started UNDISPATCHED so subscription is established immediately
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             repository.transferUpdates.collect { update ->
+                if (closed) return@collect
                 if (!isCurrentGeneration()) return@collect
                 if (isValidIdentity(update.identity)) {
                     val currentAttempt = synchronized(lock) { attemptMap[update.identity.fileId] ?: 0L }
+                    if (update.attemptId != 0L && update.attemptId != currentAttempt) return@collect
                     val newSnapshot = TransferSnapshot(
                         identity = update.identity,
                         state = update.state,
@@ -115,8 +120,8 @@ class TransferCoordinator(
     fun startTransfer(request: TransferRequest): Boolean {
         val identity = request.identity
         val fileId = request.fileId
-        if (!isValidIdentity(identity) || !isCurrentGeneration()) {
-            return false // Stale identity or invalidated generation
+        if (closed || !isValidIdentity(identity) || !isCurrentGeneration()) {
+            return false // Closed, stale identity, or invalidated generation
         }
 
         synchronized(lock) {
@@ -139,7 +144,7 @@ class TransferCoordinator(
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 semaphore.acquire()
                 try {
-                    if (!isCurrentGeneration()) {
+                    if (closed || !isCurrentGeneration()) {
                         updateSnapshot(initialSnapshot.copy(state = TransferState.TransferCancelled))
                         return@launch
                     }
@@ -194,50 +199,63 @@ class TransferCoordinator(
 
     fun cancelTransfer(identity: TransferIdentity) {
         val fileId = identity.fileId
+        var jobToCancel: Job? = null
+        var shouldCancelRepo = false
+
         synchronized(lock) {
+            if (closed) return
             val snapshot = _snapshots.value[identity]
             if (snapshot == null || snapshot.isTerminal) return
 
-            val job = activeJobs.remove(fileId)
-            job?.cancel()
-
-            if (snapshot.state !is TransferState.Queued) {
-                repository.cancel(identity)
-            }
+            jobToCancel = activeJobs.remove(fileId)
+            shouldCancelRepo = snapshot.state !is TransferState.Queued
             updateSnapshot(snapshot.copy(state = TransferState.TransferCancelled))
+        }
+
+        jobToCancel?.cancel()
+        if (shouldCancelRepo) {
+            repository.cancel(identity)
         }
     }
 
     fun onProgressUpdate(identity: TransferIdentity, percent: Int) {
-        if (!isValidIdentity(identity) || !isCurrentGeneration()) return
+        if (closed || !isValidIdentity(identity) || !isCurrentGeneration()) return
         val current = _snapshots.value[identity] ?: TransferSnapshot(identity, TransferState.InProgress(percent), percent)
         updateSnapshot(current.copy(state = TransferState.InProgress(percent), progress = percent))
     }
 
     fun clear() {
+        val jobsToCancel: List<Job>
+        val identitiesToCancel: List<TransferIdentity>
+
         synchronized(lock) {
-            activeJobs.values.forEach { it.cancel() }
+            jobsToCancel = activeJobs.values.toList()
             activeJobs.clear()
 
-            val activeIdentities = _snapshots.value
+            identitiesToCancel = _snapshots.value
                 .filter { (_, snap) -> !snap.isTerminal }
                 .keys
-            activeIdentities.forEach { identity ->
-                runCatching { repository.cancel(identity) }
-            }
+                .toList()
 
             _snapshots.value = emptyMap()
             _transferStates.value = emptyMap()
             attemptMap.clear()
         }
+
+        jobsToCancel.forEach { it.cancel() }
+        identitiesToCancel.forEach { identity ->
+            runCatching { repository.cancel(identity) }
+        }
     }
 
     override fun close() {
+        closed = true
         clear()
         scope.cancel()
     }
 
     private fun updateSnapshot(snapshot: TransferSnapshot) {
+        if (closed) return
         _snapshots.update { it + (snapshot.identity to snapshot) }
         _transferStates.update { it + (snapshot.identity.fileId to snapshot.state) }
     }

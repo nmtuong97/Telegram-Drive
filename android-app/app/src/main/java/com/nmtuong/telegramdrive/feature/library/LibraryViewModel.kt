@@ -10,31 +10,25 @@ import com.nmtuong.telegramdrive.data.AccountSessionIdentityProvider
 import com.nmtuong.telegramdrive.data.TelegramRepository
 import com.nmtuong.telegramdrive.domain.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 /**
- * Checkpoint 2, 4, 7, 8: LibraryViewModel — authorization & identity-driven source loading.
+ * Checkpoint 1, 2, 4, 7, 8: LibraryViewModel — authorization & identity-driven source loading.
  *
- * Source loading ONLY triggers after AuthorizationState.Ready AND valid identity resolution.
+ * Source loading and coordinator creation ONLY trigger after AuthorizationState.Ready AND valid non-zero identity resolution.
  */
 class LibraryViewModel(
     private val repository: TelegramRepository,
     private val identityProvider: AccountSessionIdentityProvider? = null,
 ) : ViewModel() {
 
-    private val accountId: Long get() = identityProvider?.accountId ?: 0L
-    private val databaseGeneration: Long get() = identityProvider?.databaseGeneration ?: 1L
+    private val _transferStates = MutableStateFlow<Map<Int, TransferState>>(emptyMap())
+    val transferStates: StateFlow<Map<Int, TransferState>> = _transferStates.asStateFlow()
 
-    val downloadCoordinator = DownloadCoordinator(
-        repository = repository,
-        scope = viewModelScope,
-        accountId = accountId,
-        databaseGeneration = databaseGeneration,
-        activeGenerationProvider = { identityProvider?.databaseGeneration ?: 1L },
-    )
-
-    val transferStates: StateFlow<Map<Int, TransferState>> = downloadCoordinator.transferStates
+    private var activeCoordinator: DownloadCoordinator? = null
+    private var coordinatorJob: Job? = null
 
     private val _sources = MutableStateFlow<List<FileSource>>(emptyList())
     val sources: StateFlow<List<FileSource>> = _sources.asStateFlow()
@@ -58,31 +52,63 @@ class LibraryViewModel(
         .cachedIn(viewModelScope)
 
     init {
-        // CP2+CP4: Observe authorization & identity state
+        // CP1+CP2+CP4: Combine authorization & identity state
         viewModelScope.launch {
-            repository.authorization.collect { session ->
-                when (session.state) {
-                    AuthorizationState.Ready -> {
-                        loadSourcesInternal()
-                    }
-                    AuthorizationState.Closed,
-                    AuthorizationState.LoggingOut,
-                    AuthorizationState.Closing -> {
-                        _sources.value = emptyList()
-                        _selectedSourceId.value = null
-                        _sourceError.value = null
-                    }
-                    else -> Unit
+            val identityFlow: Flow<AccountSessionIdentity?> = identityProvider?.currentIdentity ?: repository.authorization.map { auth ->
+                if (auth.state == AuthorizationState.Ready) AccountSessionIdentity(1L, 1L) else null
+            }
+            combine(repository.authorization, identityFlow) { auth, identity ->
+                Pair(auth.state, identity)
+            }.collect { (authState, identity) ->
+                if (authState == AuthorizationState.Ready && identity != null && identity.accountId != 0L) {
+                    onSessionReady(identity)
+                } else if (authState is AuthorizationState.Closed || authState is AuthorizationState.LoggingOut || authState is AuthorizationState.Closing || identity == null) {
+                    onSessionClosed()
                 }
             }
         }
+    }
 
-        if (repository.authorization.value.state == AuthorizationState.Ready) {
-            viewModelScope.launch { loadSourcesInternal() }
+    private fun onSessionReady(identity: AccountSessionIdentity) {
+        if (activeCoordinator != null) return
+
+        val newCoordinator = DownloadCoordinator(
+            repository = repository,
+            scope = viewModelScope,
+            accountId = identity.accountId,
+            databaseGeneration = identity.databaseGeneration,
+            activeGenerationProvider = { identityProvider?.databaseGeneration ?: identity.databaseGeneration },
+        )
+        activeCoordinator = newCoordinator
+
+        coordinatorJob?.cancel()
+        coordinatorJob = viewModelScope.launch {
+            newCoordinator.transferStates.collect { states ->
+                _transferStates.value = states
+            }
         }
+
+        viewModelScope.launch { loadSourcesInternal() }
+    }
+
+    private fun onSessionClosed() {
+        coordinatorJob?.cancel()
+        coordinatorJob = null
+        activeCoordinator?.close()
+        activeCoordinator = null
+
+        _transferStates.value = emptyMap()
+        _sources.value = emptyList()
+        _selectedSourceId.value = null
+        _sourceError.value = null
     }
 
     private suspend fun loadSourcesInternal() {
+        val identity = identityProvider?.currentIdentity?.value ?: AccountSessionIdentity(1L, 1L)
+        if (identity.accountId == 0L || repository.authorization.value.state != AuthorizationState.Ready) {
+            return // Never load sources before valid identity
+        }
+
         _sourceError.value = null
         try {
             val available = repository.getAvailableSources()
@@ -108,13 +134,10 @@ class LibraryViewModel(
     }
 
     fun download(item: MediaItem) {
-        val identity = TransferIdentity(
-            accountId = accountId,
-            databaseGeneration = databaseGeneration,
-            fileId = item.fileId,
-        )
+        val identity = identityProvider?.currentIdentity?.value ?: AccountSessionIdentity(1L, 1L)
+        if (identity.accountId == 0L) return
         val request = TransferRequest(
-            identity = identity,
+            identity = TransferIdentity(identity.accountId, identity.databaseGeneration, item.fileId),
             messageId = item.id,
             sourceId = item.sourceId,
             fileId = item.fileId,
@@ -122,31 +145,37 @@ class LibraryViewModel(
             expectedSizeBytes = item.sizeBytes,
             knownLocalPath = item.localPath,
         )
-        downloadCoordinator.startDownload(request)
+        activeCoordinator?.startDownload(request)
     }
 
     fun download(fileId: Int) {
-        downloadCoordinator.startDownload(fileId)
+        val identity = identityProvider?.currentIdentity?.value ?: AccountSessionIdentity(1L, 1L)
+        if (identity.accountId == 0L) return
+        activeCoordinator?.startDownload(
+            TransferRequest(
+                identity = TransferIdentity(identity.accountId, identity.databaseGeneration, fileId),
+                messageId = fileId.toLong(),
+                sourceId = 0L,
+                fileId = fileId,
+                mediaKind = MediaKind.DOCUMENT,
+            )
+        )
     }
 
     fun cancel(fileId: Int) {
-        val identity = TransferIdentity(
-            accountId = accountId,
-            databaseGeneration = databaseGeneration,
-            fileId = fileId,
-        )
-        downloadCoordinator.cancelDownload(identity)
+        val identity = identityProvider?.currentIdentity?.value ?: AccountSessionIdentity(1L, 1L)
+        activeCoordinator?.cancelDownload(TransferIdentity(identity.accountId, identity.databaseGeneration, fileId))
     }
 
     fun logout() {
         viewModelScope.launch {
-            downloadCoordinator.clear()
+            onSessionClosed()
             repository.logoutAndReset()
         }
     }
 
     fun previewPagingItem(itemId: Long, mediaKind: MediaKind, fileId: Int): PreviewTarget? {
-        val localPath = downloadCoordinator.getCompletedLocalPath(fileId) ?: return null
+        val localPath = activeCoordinator?.getCompletedLocalPath(fileId) ?: return null
         return repository.previewPagingItem(itemId, mediaKind, localPath)
     }
 
@@ -154,6 +183,6 @@ class LibraryViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        downloadCoordinator.close()
+        onSessionClosed()
     }
 }

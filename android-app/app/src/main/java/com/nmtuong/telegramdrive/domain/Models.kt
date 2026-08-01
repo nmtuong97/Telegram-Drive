@@ -173,6 +173,13 @@ data class TransferSnapshot(
   val isTerminal: Boolean get() = state.isTerminal
 }
 
+data class TransferOperationId(
+  val accountId: Long,
+  val databaseGeneration: Long,
+  val fileId: Int,
+  val attemptId: Long,
+)
+
 /**
  * Dedicated event for transfer updates across gateway/repository boundaries.
  */
@@ -182,6 +189,7 @@ data class TransferUpdate(
   val percent: Int = 0,
   val localPath: String? = null,
   val safeError: String? = null,
+  val attemptId: Long = 0L,
 )
 
 /** Result of an explicit account reset/logout operation. */

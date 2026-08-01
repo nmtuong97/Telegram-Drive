@@ -14,6 +14,7 @@ interface TdLibGateway : Closeable {
     val state: StateFlow<DiagnosticsState>
     val authorization: StateFlow<AuthorizationSession>
     val library: StateFlow<LibraryState>
+    val resetProgress: StateFlow<ResetProgress>
     val transferUpdates: kotlinx.coroutines.flow.Flow<TransferUpdate>
     fun start()
     fun submit(action: AuthorizationAction): ActionResult
