@@ -33,6 +33,11 @@ class DownloadCoordinatorTest {
         override fun getChatHistoryPagingSource(chatId: Long): androidx.paging.PagingSource<Long, MediaItem> =
             error("Not implemented")
 
+        override fun download(request: TransferRequest): ActionResult {
+            startedDownloads.add(request.fileId)
+            return ActionResult.ACCEPTED
+        }
+
         override fun download(fileId: Int): ActionResult {
             startedDownloads.add(fileId)
             return ActionResult.ACCEPTED
@@ -43,10 +48,16 @@ class DownloadCoordinatorTest {
             return ActionResult.ACCEPTED
         }
 
+        override fun cancel(identity: TransferIdentity): ActionResult {
+            canceledDownloads.add(identity.fileId)
+            return ActionResult.ACCEPTED
+        }
+
         override fun cancelDownload(fileId: Int): ActionResult {
             canceledDownloads.add(fileId)
             return ActionResult.ACCEPTED
         }
+
 
         override fun preview(itemId: Long): PreviewTarget? = null
         override fun previewPagingItem(itemId: Long, mediaKind: com.nmtuong.telegramdrive.domain.MediaKind, localPath: String): PreviewTarget? = null

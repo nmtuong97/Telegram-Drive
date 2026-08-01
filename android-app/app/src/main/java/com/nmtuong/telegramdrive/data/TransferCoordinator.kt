@@ -1,13 +1,16 @@
 package com.nmtuong.telegramdrive.data
 
 import com.nmtuong.telegramdrive.domain.ActionResult
+import com.nmtuong.telegramdrive.domain.MediaKind
 import com.nmtuong.telegramdrive.domain.TransferIdentity
+import com.nmtuong.telegramdrive.domain.TransferRequest
 import com.nmtuong.telegramdrive.domain.TransferSnapshot
 import com.nmtuong.telegramdrive.domain.TransferState
 import java.io.Closeable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -15,6 +18,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -22,25 +26,19 @@ import kotlinx.coroutines.sync.Semaphore
 /**
  * Coordinates file transfers with a single source of truth.
  *
- * Identity:
- * - Each transfer is identified by [TransferIdentity](accountId, databaseGeneration, fileId).
- * - Raw TDLib file ID alone is not a global identity.
- * - Late updates from a previous database generation are silently ignored.
+ * Checkpoint 1 Architecture: Session-scoped collector
+ * - Session collector observes [repository.transferUpdates] continuously.
+ * - Single source of truth is [_snapshots] map keyed by [TransferIdentity].
+ * - Prevents event loss on fast/cached downloads.
  *
- * Single source of truth:
- * - [snapshots] is the primary transfer snapshot state map.
- * - UI/ViewModel observe [transferStates] or [snapshots].
+ * Checkpoint 2:
+ * - Consumes [TransferRequest] containing accountId, databaseGeneration, fileId, messageId, etc.
  *
- * Concurrency:
- * - Atomic start: state registered (Queued) before job launch.
- * - Semaphore limits concurrent TDLib downloads.
- * - Duplicate start is idempotent.
- * - Cancel sends actual TDLib cancel via repository.
- * - clear() cancels all active transfers via repository.
+ * Checkpoint 3:
+ * - Terminal snapshots (especially Completed) remain retained for session duration (no 5s deletion).
  *
- * Terminal state retention:
- * - Terminal states (Completed, Failed, Cancelled, Unavailable) are retained for [TERMINAL_RETENTION_MS]
- *   bound to the specific transfer attempt token.
+ * Checkpoint 5:
+ * - Atomic LAZY job launch prevents registration race conditions.
  */
 class TransferCoordinator(
     private val repository: TelegramRepository,
@@ -48,7 +46,6 @@ class TransferCoordinator(
     private val databaseGeneration: Long,
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val maxConcurrent: Int = 3,
-    private val terminalRetentionMs: Long = TERMINAL_RETENTION_MS,
     private val activeGenerationProvider: () -> Long = { databaseGeneration },
 ) : Closeable {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -68,18 +65,56 @@ class TransferCoordinator(
     private val attemptMap = mutableMapOf<Int, Long>()
     private val lock = Any()
 
+    init {
+        // CP1: Session-scoped collector active before any download requests arrive
+        scope.launch {
+            repository.transferUpdates.collect { update ->
+                if (!isCurrentGeneration()) return@collect
+                if (isValidIdentity(update.identity)) {
+                    val currentAttempt = synchronized(lock) { attemptMap[update.identity.fileId] ?: 0L }
+                    val newSnapshot = TransferSnapshot(
+                        identity = update.identity,
+                        state = update.state,
+                        progress = update.percent,
+                        localPath = update.localPath ?: (update.state as? TransferState.Completed)?.localPath,
+                        safeError = update.safeError ?: (update.state as? TransferState.TransferFailed)?.reason,
+                        attemptId = currentAttempt,
+                    )
+                    updateSnapshot(newSnapshot)
+                }
+            }
+        }
+    }
+
     fun getSnapshot(fileId: Int): TransferSnapshot? {
         val identity = TransferIdentity(accountId, databaseGeneration, fileId)
         return _snapshots.value[identity]
     }
 
-    /**
-     * Start a transfer for [fileId].
-     *
-     * Atomic: state registered (Queued) before job launched.
-     * Generation check: verifies active generation matches coordinator generation.
-     */
+    fun getSnapshot(identity: TransferIdentity): TransferSnapshot? {
+        return _snapshots.value[identity]
+    }
+
+    /** Overload for legacy/adapter compatibility. */
     fun startTransfer(fileId: Int, identity: TransferIdentity): Boolean {
+        val request = TransferRequest(
+            identity = identity,
+            messageId = fileId.toLong(),
+            sourceId = 0L,
+            fileId = fileId,
+            mediaKind = MediaKind.DOCUMENT,
+        )
+        return startTransfer(request)
+    }
+
+    /**
+     * Start a transfer with a full [TransferRequest].
+     *
+     * CP5 Atomic: Job created with CoroutineStart.LAZY, registered in activeJobs inside lock, then started.
+     */
+    fun startTransfer(request: TransferRequest): Boolean {
+        val identity = request.identity
+        val fileId = request.fileId
         if (!isValidIdentity(identity) || !isCurrentGeneration()) {
             return false // Stale identity or invalidated generation
         }
@@ -101,7 +136,7 @@ class TransferCoordinator(
             )
             updateSnapshot(initialSnapshot)
 
-            val job = scope.launch {
+            val job = scope.launch(start = CoroutineStart.LAZY) {
                 semaphore.acquire()
                 try {
                     if (!isCurrentGeneration()) {
@@ -110,7 +145,7 @@ class TransferCoordinator(
                     }
                     updateSnapshot(initialSnapshot.copy(state = TransferState.InProgress(0), progress = 0))
 
-                    val result = repository.downloadPagingItem(fileId)
+                    val result = repository.download(request)
                     if (result != ActionResult.ACCEPTED) {
                         val failMsg = "Download rejected: $result"
                         updateSnapshot(
@@ -122,25 +157,10 @@ class TransferCoordinator(
                         return@launch
                     }
 
-                    repository.transferUpdates.collect { update ->
-                        if (!isCurrentGeneration()) {
-                            updateSnapshot(initialSnapshot.copy(state = TransferState.TransferCancelled))
-                            throw CancellationException("Generation invalidated")
-                        }
-                        if (update.identity.fileId == fileId && isValidIdentity(update.identity)) {
-                            val newSnapshot = TransferSnapshot(
-                                identity = update.identity,
-                                state = update.state,
-                                progress = update.percent,
-                                localPath = update.localPath ?: (update.state as? TransferState.Completed)?.localPath,
-                                safeError = update.safeError ?: (update.state as? TransferState.TransferFailed)?.reason,
-                                attemptId = currentAttempt,
-                            )
-                            updateSnapshot(newSnapshot)
-                            if (update.state.isTerminal) {
-                                throw CancellationException("Terminal state reached: ${update.state}")
-                            }
-                        }
+                    // Await until session collector updates _snapshots to a terminal state for this request identity
+                    _snapshots.first { snapMap ->
+                        val snap = snapMap[identity]
+                        snap != null && snap.isTerminal && snap.attemptId == currentAttempt
                     }
                 } catch (e: CancellationException) {
                     val current = _snapshots.value[identity]
@@ -159,29 +179,21 @@ class TransferCoordinator(
                 } finally {
                     semaphore.release()
                     synchronized(lock) { activeJobs.remove(fileId) }
-
-                    // Gated retention cleanup: check attempt ID before removing
-                    scope.launch {
-                        kotlinx.coroutines.delay(terminalRetentionMs)
-                        synchronized(lock) {
-                            if (attemptMap[fileId] == currentAttempt) {
-                                val snap = _snapshots.value[identity]
-                                if (snap != null && snap.isTerminal) {
-                                    _snapshots.update { it - identity }
-                                    _transferStates.update { it - fileId }
-                                }
-                            }
-                        }
-                    }
                 }
             }
             activeJobs[fileId] = job
+            job.start()
         }
         return true
     }
 
     fun cancelTransfer(fileId: Int) {
         val identity = TransferIdentity(accountId, databaseGeneration, fileId)
+        cancelTransfer(identity)
+    }
+
+    fun cancelTransfer(identity: TransferIdentity) {
+        val fileId = identity.fileId
         synchronized(lock) {
             val snapshot = _snapshots.value[identity]
             if (snapshot == null || snapshot.isTerminal) return
@@ -190,7 +202,7 @@ class TransferCoordinator(
             job?.cancel()
 
             if (snapshot.state !is TransferState.Queued) {
-                repository.cancelDownload(fileId)
+                repository.cancel(identity)
             }
             updateSnapshot(snapshot.copy(state = TransferState.TransferCancelled))
         }
@@ -207,11 +219,11 @@ class TransferCoordinator(
             activeJobs.values.forEach { it.cancel() }
             activeJobs.clear()
 
-            val activeFileIds = _snapshots.value
+            val activeIdentities = _snapshots.value
                 .filter { (_, snap) -> !snap.isTerminal }
-                .keys.map { it.fileId }
-            activeFileIds.forEach { fileId ->
-                runCatching { repository.cancelDownload(fileId) }
+                .keys
+            activeIdentities.forEach { identity ->
+                runCatching { repository.cancel(identity) }
             }
 
             _snapshots.value = emptyMap()
@@ -235,9 +247,4 @@ class TransferCoordinator(
 
     private fun isValidIdentity(identity: TransferIdentity): Boolean =
         identity.accountId == accountId && identity.databaseGeneration == databaseGeneration
-
-    companion object {
-        const val TERMINAL_RETENTION_MS = 5_000L
-    }
 }
-

@@ -31,9 +31,12 @@ class TdLibPagingSourceTest {
         override fun submit(action: AuthorizationAction) = ActionResult.ACCEPTED
         override suspend fun logoutAndReset(): AccountResetResult = AccountResetResult.Completed
         override fun loadSavedMessages(limit: Int) = ActionResult.ACCEPTED
+        override fun download(request: TransferRequest) = ActionResult.ACCEPTED
         override fun download(fileId: Int) = ActionResult.ACCEPTED
         override fun downloadPagingItem(fileId: Int) = ActionResult.ACCEPTED
+        override fun cancel(identity: TransferIdentity) = ActionResult.ACCEPTED
         override fun cancelDownload(fileId: Int) = ActionResult.ACCEPTED
+
         override fun preview(itemId: Long): PreviewTarget? = null
         override fun previewPagingItem(itemId: Long, mediaKind: com.nmtuong.telegramdrive.domain.MediaKind, localPath: String): PreviewTarget? = null
         override suspend fun getSavedMessagesChatId(): Long? = 10L

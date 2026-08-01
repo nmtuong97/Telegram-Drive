@@ -14,24 +14,15 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 /**
- * CP2: LibraryViewModel — authorization-driven source loading.
+ * Checkpoint 2, 4, 7, 8: LibraryViewModel — authorization & identity-driven source loading.
  *
- * Source loading ONLY triggers after AuthorizationState.Ready.
- * No calls to getAvailableSources() or getSavedMessagesChatId() before Ready.
- *
- * Flow:
- * AuthorizationState.Ready → loadSources() → set selectedSourceId → Pager starts
- *
- * CP7: Uses AccountSessionIdentityProvider — no hardcoded accountId=1L or databaseGeneration=1L.
- * CP8: DownloadCoordinator is closed on ViewModel.onCleared().
- * CP6: preview() uses coordinator snapshot localPath — no LibraryState lookup.
+ * Source loading ONLY triggers after AuthorizationState.Ready AND valid identity resolution.
  */
 class LibraryViewModel(
     private val repository: TelegramRepository,
     private val identityProvider: AccountSessionIdentityProvider? = null,
 ) : ViewModel() {
 
-    // CP7: Derive accountId/generation from provider; fallback to 0/1 for tests using direct construction
     private val accountId: Long get() = identityProvider?.accountId ?: 0L
     private val databaseGeneration: Long get() = identityProvider?.databaseGeneration ?: 1L
 
@@ -40,6 +31,7 @@ class LibraryViewModel(
         scope = viewModelScope,
         accountId = accountId,
         databaseGeneration = databaseGeneration,
+        activeGenerationProvider = { identityProvider?.databaseGeneration ?: 1L },
     )
 
     val transferStates: StateFlow<Map<Int, TransferState>> = downloadCoordinator.transferStates
@@ -66,18 +58,16 @@ class LibraryViewModel(
         .cachedIn(viewModelScope)
 
     init {
-        // CP2: Observe authorization state, load sources only after Ready
+        // CP2+CP4: Observe authorization & identity state
         viewModelScope.launch {
             repository.authorization.collect { session ->
                 when (session.state) {
                     AuthorizationState.Ready -> {
-                        // Trigger source load when authorization becomes Ready
                         loadSourcesInternal()
                     }
                     AuthorizationState.Closed,
                     AuthorizationState.LoggingOut,
                     AuthorizationState.Closing -> {
-                        // Clear sources and Paging state on logout/reset
                         _sources.value = emptyList()
                         _selectedSourceId.value = null
                         _sourceError.value = null
@@ -87,7 +77,6 @@ class LibraryViewModel(
             }
         }
 
-        // CP2: If already Ready when ViewModel is created (e.g., configuration change)
         if (repository.authorization.value.state == AuthorizationState.Ready) {
             viewModelScope.launch { loadSourcesInternal() }
         }
@@ -108,7 +97,6 @@ class LibraryViewModel(
         }
     }
 
-    /** CP2: Manual retry after source load failure. */
     fun reloadSources() {
         viewModelScope.launch { loadSourcesInternal() }
     }
@@ -119,12 +107,35 @@ class LibraryViewModel(
         }
     }
 
+    fun download(item: MediaItem) {
+        val identity = TransferIdentity(
+            accountId = accountId,
+            databaseGeneration = databaseGeneration,
+            fileId = item.fileId,
+        )
+        val request = TransferRequest(
+            identity = identity,
+            messageId = item.id,
+            sourceId = item.sourceId,
+            fileId = item.fileId,
+            mediaKind = item.kind,
+            expectedSizeBytes = item.sizeBytes,
+            knownLocalPath = item.localPath,
+        )
+        downloadCoordinator.startDownload(request)
+    }
+
     fun download(fileId: Int) {
         downloadCoordinator.startDownload(fileId)
     }
 
     fun cancel(fileId: Int) {
-        downloadCoordinator.cancelDownload(fileId)
+        val identity = TransferIdentity(
+            accountId = accountId,
+            databaseGeneration = databaseGeneration,
+            fileId = fileId,
+        )
+        downloadCoordinator.cancelDownload(identity)
     }
 
     fun logout() {
@@ -134,20 +145,13 @@ class LibraryViewModel(
         }
     }
 
-    /**
-     * CP6: Preview from Paging item metadata + coordinator snapshot localPath.
-     * Does NOT look up item in legacy LibraryState.Content.
-     * Falls back to legacy preview() for backward compatibility.
-     */
     fun previewPagingItem(itemId: Long, mediaKind: MediaKind, fileId: Int): PreviewTarget? {
         val localPath = downloadCoordinator.getCompletedLocalPath(fileId) ?: return null
         return repository.previewPagingItem(itemId, mediaKind, localPath)
     }
 
-    /** Legacy preview — kept for P1 compatibility. */
     fun preview(itemId: Long): PreviewTarget? = repository.preview(itemId)
 
-    /** CP8: Close coordinator on ViewModel cleared to release session collector scope. */
     override fun onCleared() {
         super.onCleared()
         downloadCoordinator.close()

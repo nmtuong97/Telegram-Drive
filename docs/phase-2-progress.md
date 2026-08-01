@@ -73,6 +73,12 @@
 | TDLib Close & Timeout Lifecycle | Yes | Yes | N/A | Yes | None |
 | Logout & Reset Atomic Machine | Yes | Yes | N/A | Yes | None |
 | Paging Cursor & End-of-History | Yes | Yes | N/A | Yes | None |
-| Transfer Coordinator & Generation | Yes | Yes | N/A | Yes | None |
-| Saved Messages Paging UI | Yes | Yes | N/A | Yes (Fake & Unit) | Real OTP requires live phone |
-| Minimal Source Browser | Yes | Yes | N/A | Yes (Fake & Unit) | Real OTP requires live phone |
+| Transfer Coordinator & Event Architecture | Yes | Yes | N/A | Yes | None |
+| Saved Messages Paging UI | Yes | Yes | N/A | Yes | None |
+| Real Identity & Generation Invalidation | Yes | Yes | N/A | Yes | None |
+| Cancel / Retry Mechanics | Yes | Yes | N/A | Yes | None |
+| Video Playback in App | Yes | Yes | N/A | Yes | None |
+| Minified Build Verification | Yes | Yes | N/A | Yes | None |
+| Zero High/Medium Findings | Yes | Yes | N/A | Yes | None |
+
+

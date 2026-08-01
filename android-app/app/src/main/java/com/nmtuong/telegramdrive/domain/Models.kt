@@ -199,12 +199,16 @@ sealed interface AccountResetResult {
  */
 sealed interface ResetProgress {
   data object Idle : ResetProgress
+  data object BlockingTransfers : ResetProgress
   data object CancellingTransfers : ResetProgress
+  data object InvalidatingGeneration : ResetProgress
   data object LoggingOut : ResetProgress
   data object WaitingForClosed : ResetProgress
   data object DeletingDatabase : ResetProgress
   data object DeletingFiles : ResetProgress
   data object DeletingKey : ResetProgress
+  data object ClearingIdentity : ResetProgress
   data object Completed : ResetProgress
   data class Failed(val reason: String, val retryable: Boolean = true) : ResetProgress
 }
+

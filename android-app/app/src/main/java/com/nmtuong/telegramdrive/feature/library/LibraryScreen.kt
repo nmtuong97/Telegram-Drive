@@ -115,7 +115,7 @@ fun LibraryScreen(viewModel: LibraryViewModel, onPreview: (PreviewTarget) -> Uni
                                     MediaCard(
                                         item = item,
                                         transferState = transferState,
-                                        onDownload = { viewModel.download(item.fileId) },
+                                        onDownload = { viewModel.download(item) },
                                         onCancel = { viewModel.cancel(item.fileId) },
                                         onPreview = {
                                             viewModel.previewPagingItem(item.id, item.kind, item.fileId)?.let(onPreview)

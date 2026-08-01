@@ -5,8 +5,10 @@ import com.nmtuong.telegramdrive.domain.*
 import com.nmtuong.telegramdrive.telegram.TdLibGateway
 import java.io.File
 import java.util.Base64
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -26,8 +28,10 @@ class RealTelegramRepository(private val gateway: TdLibGateway) : TelegramReposi
     override fun submit(action: AuthorizationAction) = gateway.submit(action)
     override suspend fun logoutAndReset(): AccountResetResult = gateway.logoutAndReset()
     override fun loadSavedMessages(limit: Int) = gateway.loadSavedMessages(limit)
+    override fun download(request: TransferRequest) = gateway.download(request)
     override fun download(fileId: Int) = gateway.download(fileId)
     override fun downloadPagingItem(fileId: Int) = gateway.downloadPagingItem(fileId)
+    override fun cancel(identity: TransferIdentity) = gateway.cancel(identity)
     override fun cancelDownload(fileId: Int) = gateway.cancelDownload(fileId)
     override fun previewPagingItem(
         itemId: Long,
@@ -99,7 +103,9 @@ class FakeTelegramRepository(
         } ?: return ActionResult.INVALID_STATE
         mutableAuthorization.value = AuthorizationSession(next)
         mutableDiagnostics.value = mutableDiagnostics.value.copy(authorizationState = next)
-        if (next != AuthorizationState.Ready) {
+        if (next == AuthorizationState.Ready) {
+            identityProvider.updateAccount(catalog.account.id)
+        } else {
             cancelDownloadsAndClearFiles()
             mutableLibrary.value = LibraryState.Idle
         }
@@ -107,10 +113,17 @@ class FakeTelegramRepository(
     }
 
     override suspend fun logoutAndReset(): AccountResetResult {
+        // CP6: Reset ordering for Fake Telegram Repository
+        // 1. Cancel active transfers while tracking exists
         cancelDownloadsAndClearFiles()
+        // 2. Invalidate generation
+        identityProvider.invalidateGeneration()
+        // 3. Update auth state to closed
         mutableAuthorization.value = AuthorizationSession(AuthorizationState.Closed)
         mutableDiagnostics.value = mutableDiagnostics.value.copy(authorizationState = AuthorizationState.Closed)
         mutableLibrary.value = LibraryState.Idle
+        // 4. Clear identity
+        identityProvider.clear()
         return AccountResetResult.Completed
     }
 
@@ -127,7 +140,19 @@ class FakeTelegramRepository(
         return ActionResult.ACCEPTED
     }
 
+    override fun download(request: TransferRequest): ActionResult {
+        return downloadInternal(request.fileId, request.identity)
+    }
+
+    override fun download(fileId: Int): ActionResult {
+        return downloadInternal(fileId, currentIdentityFor(fileId))
+    }
+
     override fun downloadPagingItem(fileId: Int): ActionResult {
+        return downloadInternal(fileId, currentIdentityFor(fileId))
+    }
+
+    private fun downloadInternal(fileId: Int, identity: TransferIdentity): ActionResult {
         val item = (library.value as? LibraryState.Content)?.items?.firstOrNull { it.fileId == fileId }
             ?: catalog.media.firstOrNull { it.fileId == fileId }
             ?: return ActionResult.INVALID_STATE
@@ -138,51 +163,62 @@ class FakeTelegramRepository(
             (downloadGenerations[fileId] ?: 0L) + 1L
         }
         synchronized(lock) { downloadGenerations[fileId] = generation }
-        val identity = currentIdentityFor(fileId)
+
         updateItem(fileId) { it.copy(downloadState = DownloadState.Downloading(0), localPath = null) }
         mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.InProgress(0)))
 
-        val job = scope.launch {
-            delay(downloadStepDelayMillis)
-            if (!isCurrentDownload(fileId, generation)) return@launch
-            updateItem(fileId) { it.copy(downloadState = DownloadState.Downloading(50)) }
-            mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.InProgress(50)))
-            delay(downloadStepDelayMillis)
-            if (!isCurrentDownload(fileId, generation)) return@launch
-            if (item.kind == MediaKind.ANIMATION) {
-                updateItem(fileId) { it.copy(downloadState = DownloadState.Failed("Simulated download failure"), localPath = null) }
-                mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.TransferFailed("Simulated download failure")))
-            } else {
-                filesDirectory.mkdirs()
-                val target = File(filesDirectory, item.name)
-                when (item.kind) {
-                    MediaKind.IMAGE -> target.writeBytes(FAKE_PNG)
-                    MediaKind.VIDEO -> target.writeBytes(videoBytes())
-                    else -> target.writeBytes(ByteArray(0))
+        // CP5 Atomic: CoroutineStart.LAZY before adding to downloadJobs
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                delay(downloadStepDelayMillis)
+                if (!isCurrentDownload(fileId, generation)) return@launch
+                updateItem(fileId) { it.copy(downloadState = DownloadState.Downloading(50)) }
+                mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.InProgress(50)))
+                delay(downloadStepDelayMillis)
+                if (!isCurrentDownload(fileId, generation)) return@launch
+                if (item.kind == MediaKind.ANIMATION) {
+                    updateItem(fileId) { it.copy(downloadState = DownloadState.Failed("Simulated download failure"), localPath = null) }
+                    mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.TransferFailed("Simulated download failure")))
+                } else {
+                    filesDirectory.mkdirs()
+                    val target = File(filesDirectory, item.name)
+                    when (item.kind) {
+                        MediaKind.IMAGE -> target.writeBytes(FAKE_PNG)
+                        MediaKind.VIDEO -> target.writeBytes(videoBytes())
+                        else -> target.writeBytes(ByteArray(0))
+                    }
+                    if (isCurrentDownload(fileId, generation)) {
+                        updateItem(fileId) { it.copy(downloadState = DownloadState.Complete, localPath = target.absolutePath) }
+                        mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.Completed(target.absolutePath), 100, target.absolutePath))
+                    }
                 }
-                if (isCurrentDownload(fileId, generation)) {
-                    updateItem(fileId) { it.copy(downloadState = DownloadState.Complete, localPath = target.absolutePath) }
-                    mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.Completed(target.absolutePath), 100, target.absolutePath))
-                }
+            } catch (e: CancellationException) {
+                mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.TransferCancelled))
+                throw e
+            } finally {
+                synchronized(lock) { downloadJobs.remove(fileId) }
             }
-            synchronized(lock) { downloadJobs.remove(fileId) }
         }
         synchronized(lock) { downloadJobs[fileId] = job }
+        job.start()
         return ActionResult.ACCEPTED
     }
 
-    override fun download(fileId: Int): ActionResult {
-        return downloadPagingItem(fileId)
+    override fun cancel(identity: TransferIdentity): ActionResult {
+        return cancelDownloadInternal(identity.fileId, identity)
     }
 
     override fun cancelDownload(fileId: Int): ActionResult {
+        return cancelDownloadInternal(fileId, currentIdentityFor(fileId))
+    }
+
+    private fun cancelDownloadInternal(fileId: Int, identity: TransferIdentity): ActionResult {
         val item = (library.value as? LibraryState.Content)?.items?.firstOrNull { it.fileId == fileId }
             ?: catalog.media.firstOrNull { it.fileId == fileId }
             ?: return ActionResult.INVALID_STATE
         val isActive = synchronized(lock) { downloadJobs[fileId]?.isActive == true }
         if (!isActive && item.downloadState !is DownloadState.Downloading) return ActionResult.INVALID_STATE
 
-        val identity = currentIdentityFor(fileId)
         synchronized(lock) {
             downloadGenerations[fileId] = (downloadGenerations[fileId] ?: 0L) + 1L
             downloadJobs.remove(fileId)?.cancel()
@@ -222,15 +258,6 @@ class FakeTelegramRepository(
 
     override suspend fun getAvailableSources(): List<FileSource> = catalog.sources
 
-    /**
-     * Fake loadHistoryPage — same semantics as real paging:
-     * - fromMessageId=0 means first page (most recent messages).
-     * - Key is the raw message ID (same meaning as real paging).
-     * - Supported media only; boundary handled by fromMessageId dedup.
-     * - endOfHistory=true when no more older messages.
-     * - Same ordering: descending by ID (most recent first).
-     * - Same supported media rules as real mapping.
-     */
     override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage {
         val safeLimit = limit.coerceIn(1, 100)
         var cursor = fromMessageId

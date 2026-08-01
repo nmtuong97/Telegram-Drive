@@ -25,8 +25,10 @@ interface TelegramRepository : Closeable {
     fun submit(action: AuthorizationAction): ActionResult
     suspend fun logoutAndReset(): AccountResetResult
     fun loadSavedMessages(limit: Int = 50): ActionResult
+    fun download(request: TransferRequest): ActionResult
     fun download(fileId: Int): ActionResult
     fun downloadPagingItem(fileId: Int): ActionResult
+    fun cancel(identity: TransferIdentity): ActionResult
     fun cancelDownload(fileId: Int): ActionResult
 
     /**

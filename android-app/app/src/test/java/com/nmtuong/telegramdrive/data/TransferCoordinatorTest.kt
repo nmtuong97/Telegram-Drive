@@ -37,6 +37,10 @@ class TransferCoordinatorTest {
         override fun submit(action: AuthorizationAction) = ActionResult.ACCEPTED
         override suspend fun logoutAndReset(): AccountResetResult = AccountResetResult.Completed
         override fun loadSavedMessages(limit: Int) = ActionResult.ACCEPTED
+        override fun download(request: TransferRequest): ActionResult {
+            downloadedFileIds.add(request.fileId)
+            return ActionResult.ACCEPTED
+        }
         override fun download(fileId: Int): ActionResult {
             downloadedFileIds.add(fileId)
             return ActionResult.ACCEPTED
@@ -45,10 +49,15 @@ class TransferCoordinatorTest {
             downloadedFileIds.add(fileId)
             return ActionResult.ACCEPTED
         }
+        override fun cancel(identity: TransferIdentity): ActionResult {
+            cancelledFileIds.add(identity.fileId)
+            return ActionResult.ACCEPTED
+        }
         override fun cancelDownload(fileId: Int): ActionResult {
             cancelledFileIds.add(fileId)
             return ActionResult.ACCEPTED
         }
+
         override fun preview(itemId: Long): PreviewTarget? = null
         override fun previewPagingItem(itemId: Long, mediaKind: com.nmtuong.telegramdrive.domain.MediaKind, localPath: String): PreviewTarget? = null
         override suspend fun getSavedMessagesChatId(): Long? = 1L

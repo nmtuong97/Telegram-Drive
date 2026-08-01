@@ -1,7 +1,9 @@
 package com.nmtuong.telegramdrive.telegram
 
 import android.content.Context
+import com.nmtuong.telegramdrive.data.AccountSessionIdentityProvider
 import com.nmtuong.telegramdrive.domain.*
+
 import com.nmtuong.telegramdrive.security.SensitiveDataRedactor
 import com.nmtuong.telegramdrive.security.TelegramApiConfiguration
 import java.io.File
@@ -43,10 +45,12 @@ class TdLibJsonGateway internal constructor(
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val closeTimeoutMs: Long = CLOSE_TIMEOUT_MS,
     private val logoutTimeoutMs: Long = LOGOUT_TIMEOUT_MS,
+    private val identityProvider: AccountSessionIdentityProvider? = null,
     /** CP7: Provides current account identity; injected to remove hardcoded (1L,1L). */
-    private val currentAccountId: () -> Long = { 0L },
-    private val currentDatabaseGeneration: () -> Long = { 1L },
+    private val currentAccountId: () -> Long = { identityProvider?.accountId ?: 0L },
+    private val currentDatabaseGeneration: () -> Long = { identityProvider?.databaseGeneration ?: 1L },
 ) : TdLibGateway {
+
     private val lock = Any()
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val json = Json { ignoreUnknownKeys = true }
@@ -192,12 +196,25 @@ class TdLibJsonGateway internal constructor(
         }
         when (mapped) {
             AuthorizationState.WaitingForTdlibParameters -> sendTdlibParametersOrExposeMissingConfig()
-            AuthorizationState.Ready -> Unit
+            AuthorizationState.Ready -> resolveAccountIdentity()
             // authorizationStateClosed — TDLib confirmed full close. Now finalize.
             AuthorizationState.Closed -> finalizeClose()
             else -> Unit
         }
     }
+
+    private fun resolveAccountIdentity() {
+        scope.launch {
+            val meResponse = execute(buildJsonObject { put("@type", "getMe") })
+            if (meResponse.string("@type") != "error") {
+                val userId = meResponse.long("id")
+                if (userId != 0L) {
+                    identityProvider?.updateAccount(userId)
+                }
+            }
+        }
+    }
+
 
     /**
      * Called when TDLib sends authorizationStateClosed.
@@ -324,20 +341,26 @@ class TdLibJsonGateway internal constructor(
 
             val launchedJob = scope.launch {
                 try {
-                    // Step 1: Cancel active TDLib downloads
+                    // Step 1: Cancel active TDLib downloads while tracking exists
                     val activeFileIds = synchronized(lock) {
-                        val ids = pendingDownloads.toList()
-                        pendingDownloads.clear()
-                        pendingCancellations.clear()
-                        pendingDownloadRequests.clear()
-                        pendingCancelRequests.clear()
-                        ids
+                        pendingDownloads.toList()
                     }
                     activeFileIds.forEach { fileId ->
                         runCatching { cancelDownload(fileId) }
                     }
 
-                    // Step 2: Send logOut (network required)
+                    // Step 2: Invalidate generation
+                    identityProvider?.invalidateGeneration()
+
+                    // Step 3: Clear tracking maps
+                    synchronized(lock) {
+                        pendingDownloads.clear()
+                        pendingCancellations.clear()
+                        pendingDownloadRequests.clear()
+                        pendingCancelRequests.clear()
+                    }
+
+                    // Step 4: Send logOut (network required)
                     val logoutResult = runCatching {
                         withTimeout(logoutTimeoutMs) {
                             execute(buildJsonObject { put("@type", "logOut") })
@@ -363,7 +386,7 @@ class TdLibJsonGateway internal constructor(
                         return@launch
                     }
 
-                    // Step 3: Wait for TDLib to confirm authorizationStateClosed
+                    // Step 5: Wait for TDLib to confirm authorizationStateClosed
                     val closeResult = runCatching {
                         withTimeout(closeTimeoutMs) {
                             authorization.first { it.state == AuthorizationState.Closed }
@@ -376,16 +399,18 @@ class TdLibJsonGateway internal constructor(
                         return@launch
                     }
 
-                    // Step 4: TDLib confirmed Closed — safe to delete local data
+                    // Step 6: TDLib confirmed Closed — safe to delete local data
                     val dbDeleted = if (databaseDirectory.exists()) databaseDirectory.deleteRecursively() else true
                     val filesDeleted = if (filesDirectory.exists()) filesDirectory.deleteRecursively() else true
 
                     if (dbDeleted && filesDeleted) {
                         encryptionManager?.clearKey()
+                        identityProvider?.clear()
                         mutableResetResult.value = AccountResetResult.Completed
                     } else {
                         mutableResetResult.value = AccountResetResult.Failed("Local file deletion failed. Encryption key preserved.")
                     }
+
                 } catch (e: CancellationException) {
                     mutableResetResult.value = AccountResetResult.Cancelled
                     throw e
@@ -597,8 +622,16 @@ class TdLibJsonGateway internal constructor(
 
     internal fun handleResponseForTest(raw: String) = handleResponse(raw)
 
-    override fun downloadPagingItem(fileId: Int): ActionResult {
-        val request = synchronized(lock) {
+    override fun download(request: TransferRequest): ActionResult {
+        val fileId = request.fileId
+        val currentLifecycle = synchronized(lock) { lifecycle }
+        if (currentLifecycle != GatewayLifecycle.RUNNING) {
+            mutableTransferUpdates.tryEmit(
+                TransferUpdate(identity = request.identity, state = TransferState.TransferFailed("Gateway is not running"), safeError = "Gateway is not running")
+            )
+            return ActionResult.INVALID_STATE
+        }
+        val reqEnvelope = synchronized(lock) {
             if (fileId in pendingCancellations || !pendingDownloads.add(fileId)) return ActionResult.DUPLICATE
             requestEnvelope("download-$fileId", buildJsonObject {
                 put("@type", "downloadFile")
@@ -607,16 +640,22 @@ class TdLibJsonGateway internal constructor(
                 put("synchronous", false)
             }).also { pendingDownloadRequests[fileId] = it.string("@extra").orEmpty() }
         }
-        send(request)
+        send(reqEnvelope)
         return ActionResult.ACCEPTED
     }
 
     override fun download(fileId: Int): ActionResult {
-        return downloadPagingItem(fileId)
+        val identity = TransferIdentity(currentAccountId(), currentDatabaseGeneration(), fileId)
+        return download(TransferRequest(identity, fileId.toLong(), 0L, fileId, MediaKind.DOCUMENT))
     }
 
-    override fun cancelDownload(fileId: Int): ActionResult {
-        val request = synchronized(lock) {
+    override fun downloadPagingItem(fileId: Int): ActionResult {
+        return download(fileId)
+    }
+
+    override fun cancel(identity: TransferIdentity): ActionResult {
+        val fileId = identity.fileId
+        val reqEnvelope = synchronized(lock) {
             if (fileId !in pendingDownloads || !pendingCancellations.add(fileId)) return ActionResult.INVALID_STATE
             requestEnvelope("cancel-$fileId", buildJsonObject {
                 put("@type", "cancelDownloadFile")
@@ -624,15 +663,19 @@ class TdLibJsonGateway internal constructor(
                 put("only_if_pending", false)
             }).also { pendingCancelRequests[fileId] = it.string("@extra").orEmpty() }
         }
-        send(request)
-        // CP7: Use injected account identity
-        val identity = TransferIdentity(currentAccountId(), currentDatabaseGeneration(), fileId)
+        send(reqEnvelope)
         mutableTransferUpdates.tryEmit(
             TransferUpdate(identity = identity, state = TransferState.TransferCancelled)
         )
         updateItem(fileId) { it.copy(downloadState = DownloadState.Canceled, localPath = null) }
         return ActionResult.ACCEPTED
     }
+
+    override fun cancelDownload(fileId: Int): ActionResult {
+        val identity = TransferIdentity(currentAccountId(), currentDatabaseGeneration(), fileId)
+        return cancel(identity)
+    }
+
 
     private fun handleFile(file: JsonObject) {
         val fileId = file.int("id")
