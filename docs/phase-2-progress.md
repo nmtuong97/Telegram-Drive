@@ -4,7 +4,7 @@
 
 - **Repository**: `nmtuong97/Telegram-Drive`
 - **Branch**: `agent/android-phase-2`
-- **HEAD Commit**: Current HEAD on `agent/android-phase-2`
+- **HEAD Commit**: `f9159e8822bcb884a0d5bf2b218acb423d221e19`
 - **App Module**: `android-app/`
 
 ---
@@ -20,9 +20,10 @@
 | Checkpoint 4 | Paging Correctness | **Implemented & Verified** | `endOfHistory` based on raw empty response, cursor progress loop prevention (`rawLastMessageId == cursor`), terminal page `nextKey == null`. Unit-tested. |
 | Checkpoint 5 | Transfer Ownership & Generation | **Implemented & Verified** | `TransferCoordinator` single source of truth, dynamic `isCurrentGeneration()` checking active generation, attempt-gated retention timers. Unit-tested. |
 | Checkpoint 6 | Foundation Validation Gate | **PASSED** | 100% test pass across default & fake data sources and minified build. Zero High/Medium findings. |
-| Checkpoint 7 | P2 Vertical Slice: Saved Messages Paging UI | **Implemented & Verified** | End-to-end `LazyPagingItems` flow in `LibraryScreen`, ViewModel Pager, items metadata (name, kind, size, transfer state), retry & error states. Unit-tested. |
-| Checkpoint 8 | Minimal Source Browser | **Implemented & Verified** | Filter chips for active sources with Saved Messages primary, dynamic source switching resets Pager stream, stable source identity. Unit-tested. |
-| Checkpoint 9 | Final Validation Matrix | **Implemented & Verified** | Full build matrix clean pass: `./gradlew clean testDebugUnitTest lintDebug assembleDebug`, `./gradlew -PtelegramDataSource=fake ...`, `./gradlew clean assembleMinifiedDebug`. |
+| Checkpoint 7 | P2 Vertical Slice: Saved Messages Paging UI | **Implemented & Verified** | End-to-end `LazyPagingItems` flow in `LibraryScreen`, ViewModel Pager, items metadata (name, kind, size, transfer state), retry & error states. Unit-tested & Runtime-verified. |
+| Checkpoint 8 | Minimal Source Browser | **Implemented & Verified** | Filter chips for active sources with Saved Messages primary, dynamic source switching resets Pager stream, stable source identity. Unit-tested & Runtime-verified. |
+| Checkpoint 9 | Final Validation Matrix | **Implemented & Verified** | Full build matrix clean pass on SHA `f9159e8822bcb884a0d5bf2b218acb423d221e19`: `./gradlew testDebugUnitTest lintDebug assembleDebug -PtelegramDataSource=fake`. |
+| Checkpoint 10 | Android CLI Journeys | **Runtime-Verified** | Journeys A-E pass on emulator with verified SHA `f9159e8822bcb884a0d5bf2b218acb423d221e19` evidence manifest. |
 
 ---
 
