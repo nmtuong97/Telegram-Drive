@@ -28,6 +28,9 @@ full-download fallback to satisfy Phase 3.
   verifies temporary cleanup on close.
 - The fake Room/runtime wiring reaches the gallery and uses a Media3 factory for
   video items; it is not evidence of TDLib behavior.
+- The latest fake-device gallery/video captures are [`phase-3-current-gallery.png`](evidence/phase-3-current-gallery.png)
+  and [`phase-3-current-video.png`](evidence/phase-3-current-video.png); they remain
+  explicitly non-evidence for the real TDLib progressive-streaming gate.
 
 ## Required real Telegram run
 
