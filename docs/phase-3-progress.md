@@ -17,6 +17,7 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 - Test coverage commit: `ace373a` (`test(android): add phase 3 media and streaming coverage`).
 - Prior evidence/documentation commits: `9fd8b0f`, `e3c0a4c`, `bea623f`.
 - Latest lifecycle hardening commit: `3d0a15a` (`fix(android): harden phase 3 account and media lifecycle`).
+- Latest account-isolation/gallery-flow commit: `730e2b1` (`fix(android): scope gallery flows to account identity`).
 
 ## Implemented
 
@@ -46,6 +47,9 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 - Account mutation/reconciliation is serialized across scanner callbacks, logout/reset,
   and late TDLib file updates. Unknown post-boundary file IDs stay blocked until an
   explicit request; non-zero range downloads do not masquerade as contiguous prefixes.
+- Thumbnail/video deduplication and cleanup are keyed by account identity plus stable
+  remote file identity; Paging and sync-state observation rebind on identity changes,
+  preventing stale gallery rows or callbacks from crossing account generations.
 - Gallery sync status exposes phase, checkpoint/head watermark, last successful catch-up,
   and retryable errors; image-open failures expose retry.
 - Existing source browser, document/audio/PDF/animation/external preview, transfer,
@@ -85,10 +89,10 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 | --- | --- | --- |
 | `:app:testDebugUnitTest` | PASS, exit 0 | 124 tests completed, 0 failures/errors; includes identity, stale-file, range-prefix, and finite cancellation-race coverage. |
 | `:app:lintDebug` | PASS, exit 0 | No lint errors; warnings only. |
-| `:app:assembleDebug -PtelegramDataSource=fake` | PASS, exit 0 | Final APK is 70,108,044 bytes; SHA-256: `3a29d5b542cf0f6cf33d3a2cdd690c88f71a819d050f83ac09cec3bc1483ae96`. |
-| `:app:assembleDebug` (real default) | PASS, exit 0 | Real APK build is valid; launch stopped at Telegram sign-in and requires user credentials/OTP/2FA. |
-| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | PASS, exit 0 | 11 tests on `Pixel_9_Pro` API 36, 0 failures/errors, including repository crash-resume/update and shared-video release tests. |
-| Fake runtime | PASS for fake scope | Current Room-backed gallery is captured in [`phase-3-current-gallery.png`](evidence/phase-3-current-gallery.png) with hierarchy in [`phase-3-current-gallery-layout.json`](evidence/phase-3-current-gallery-layout.json); fake Media3 video preview is captured in [`phase-3-current-video.png`](evidence/phase-3-current-video.png). Earlier image-viewer evidence remains valid. These are not real-TDLib progressive-streaming evidence. |
+| `:app:assembleDebug -PtelegramDataSource=fake` | PASS, exit 0 | Final APK is 70,112,262 bytes; SHA-256: `e3507f8b9ce1683064d37b78375d137e18672b63221a0e8554e3b361a2e051c1`. |
+| `:app:assembleDebug` (real default) | PASS, exit 0 | Current source also assembles real APK; launch stopped at Telegram sign-in and requires user credentials/OTP/2FA. |
+| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | PASS, exit 0 | 12 tests on `Pixel_9_Pro` API 36, 0 failures/errors, including account-scoped Paging rebinding, repository crash-resume/update, and shared-video release tests. |
+| Fake runtime | PASS for fake scope | Current Room-backed gallery is captured in [`phase-3-current-gallery.png`](evidence/phase-3-current-gallery.png) with hierarchy in [`phase-3-current-gallery-layout.json`](evidence/phase-3-current-gallery-layout.json); fake Media3 video preview is captured in [`phase-3-current-video.png`](evidence/phase-3-current-video.png). Resumed fake APK sign-in state is captured in [`phase-3-resumed-runtime.png`](evidence/phase-3-resumed-runtime.png) with hierarchy in [`phase-3-resumed-runtime-layout.json`](evidence/phase-3-resumed-runtime-layout.json). Earlier image-viewer evidence remains valid. These are not real-TDLib progressive-streaming evidence. |
 | Android CLI | PASS | Final fake APK deployed with `android run`; final layout and screenshot captured. |
 | Real Telegram account | NOT VERIFIED | Real preflight reaches sign-in; progressive spike, large-video seek, network recovery, and account logout remain `USER_INTERACTION_REQUIRED` / pending authorized real-account run. |
 
