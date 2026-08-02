@@ -21,7 +21,8 @@ real-account gate. A file is not described as passing unless it was actually pro
 | Latest account-isolation/gallery-flow commit | `730e2b1` (`fix(android): scope gallery flows to account identity`). |
 | Previous range-cancellation hardening commit | `3466de3` (`fix(android): cancel stale video range waits`). |
 | Previous media-cache/reader hardening commit | `305b309` (`fix(android): harden phase 3 media cache and readers`). |
-| Latest implementation commit | `1224709` (`fix(android): add non-destructive media database migration`). |
+| Previous implementation commit | `1224709` (`fix(android): add non-destructive media database migration`). |
+| Latest implementation commit | `995cf5b` (`fix(android): prevent dropped saved message updates`). |
 
 ## Commands and exit codes
 
@@ -31,7 +32,7 @@ All Gradle invocations were run one at a time through
 
 | Command | Exit code | Notes |
 | --- | ---: | --- |
-| `:app:testDebugUnitTest -PtelegramDataSource=fake` | 0 | 129 tests passed, 0 failures/errors/skips; includes account-generation, range-prefix, LRU eviction, complete-file-size, independent-reader, cancellation, and late-update coverage. |
+| `:app:testDebugUnitTest -PtelegramDataSource=fake` | 0 | 131 tests passed, 0 failures/errors/skips; includes burst-safe saved-message update delivery, account-boundary queue draining, account-generation, range-prefix, LRU eviction, complete-file-size, independent-reader, cancellation, and late-update coverage. |
 | `:app:lintDebug` | 0 | Lint passed; warnings only. |
 | `:app:assembleDebug -PtelegramDataSource=fake` | 0 | Final fake APK produced; SHA-256 is recorded below. |
 | `:app:assembleDebug` (real default) | 0 | Real APK assembled; launch requires Telegram sign-in. |
@@ -68,7 +69,9 @@ Device: `TelegramDrive_Small` AVD, serial `emulator-5554`, API 36.
 - Room entities/DAOs/database: `android-app/app/src/main/java/com/nmtuong/telegramdrive/data/local/`.
 - Room schema artifact: `android-app/app/schemas/com.nmtuong.telegramdrive.data.local.MediaDatabase/2.json`; `MIGRATION_1_2` adds catch-up completion time without destructive reset.
 - Sync and Paging repository: `data/SavedMediaRepository.kt`.
-- TDLib update/file snapshot bridge: `telegram/TdLibJsonGateway.kt`.
+- TDLib update/file snapshot bridge: `telegram/TdLibJsonGateway.kt`; saved-message updates use
+  an unbounded channel and account-boundary draining to preserve listener bursts without
+  allowing queued updates from the prior generation through reset.
 - Range coordinator and Media3 data source: `data/video/`.
 - Thumbnail/original/cache coordinator: `data/MediaAccessCoordinator.kt`.
 - Gallery UI/ViewModel: `feature/gallery/`.
@@ -77,6 +80,8 @@ Device: `TelegramDrive_Small` AVD, serial `emulator-5554`, API 36.
 ## Test evidence
 
 - Unit message mapping: `PhaseThreeMessageMappingTest.kt` plus existing mapper tests.
+- Unit saved-message update delivery: `TdLibSavedMessageUpdatesTest.kt` covers a 256-event
+  listener burst and queued-update draining at an account boundary.
 - Unit progressive range/seek/cancel cleanup: `VideoStreamingCoordinatorTest.kt`.
 - Unit LRU thumbnail eviction: `MediaAccessCoordinatorTest.kt`.
 - Instrumented Room migration: `MediaDatabaseMigrationTest.migratesVersionOneWithoutDroppingSyncState`.
@@ -108,4 +113,4 @@ entry. The scope is not silently downgraded to full-download playback.
 
 - Expected final path: `android-app/app/build/outputs/apk/debug/app-debug.apk`.
 - Final fake APK size: `70,146,979` bytes.
-- Final SHA-256: `94d880fd64497d7fb4a3d38d8c956bbacfa0f3e5396b18bde123a66341389894`.
+- Final SHA-256: `c197889f7dcdb805b2a32a07398c0e98419c3728f73bae60cf1d67de651b7e87`.
