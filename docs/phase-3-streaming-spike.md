@@ -3,7 +3,8 @@
 Status: `PENDING — USER_INTERACTION_REQUIRED`
 
 Preflight evidence: the real build assembled successfully, but the emulator is at
-Telegram sign-in in `docs/evidence/phase-3-real-preflight-layout.json`; no phone,
+Telegram sign-in in [`phase-3-real-final-preflight-layout.json`](evidence/phase-3-real-final-preflight-layout.json)
+and [`phase-3-real-final-preflight.png`](evidence/phase-3-real-final-preflight.png); no phone,
 OTP, 2FA password, or Telegram data mutation was performed.
 
 The production path is implemented as:
@@ -28,6 +29,9 @@ full-download fallback to satisfy Phase 3.
   verifies temporary cleanup on close.
 - The fake Room/runtime wiring reaches the gallery and uses a Media3 factory for
   video items; it is not evidence of TDLib behavior.
+- Connected instrumentation now also proves repository crash-resume/incremental
+  updates and shared `TdLibVideoDataSource` release behavior; these remain fake or
+  injected-gateway evidence, not proof of a real Telegram partial download.
 - The latest fake-device gallery/video captures are [`phase-3-current-gallery.png`](evidence/phase-3-current-gallery.png)
   and [`phase-3-current-video.png`](evidence/phase-3-current-video.png); they remain
   explicitly non-evidence for the real TDLib progressive-streaming gate.

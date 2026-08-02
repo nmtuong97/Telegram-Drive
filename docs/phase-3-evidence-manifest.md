@@ -16,8 +16,8 @@ real-account gate. A file is not described as passing unless it was actually pro
 | Detailed plan | [`docs/phase-3-plan.md`](phase-3-plan.md) |
 | Final implementation commit | `3329d13` (`feat(android): implement phase 3 saved media gallery`). |
 | Test coverage commit | `ace373a` (`test(android): add phase 3 media and streaming coverage`). |
-| Evidence/documentation commit | `9fd8b0f`. |
-| Latest repository hardening/evidence commit | `664f129` (`fix(android): harden phase 3 media lifecycle`). |
+| Evidence/documentation commit | `9fd8b0f`, `e3c0a4c`, `bea623f`. |
+| Latest lifecycle hardening commit | `3d0a15a` (`fix(android): harden phase 3 account and media lifecycle`). |
 
 ## Commands and exit codes
 
@@ -27,11 +27,11 @@ All Gradle invocations were run one at a time through
 
 | Command | Exit code | Notes |
 | --- | ---: | --- |
-| `:app:testDebugUnitTest -PtelegramDataSource=fake` | 0 | 121 tests passed, including account-generation late-update invalidation. |
-| `:app:lintDebug -PtelegramDataSource=fake` | 0 | Lint passed after explicit Media3 `androidx.annotation.OptIn`. |
-| `:app:assembleDebug -PtelegramDataSource=fake` | 0 | Final APK produced; SHA-256 is recorded below. |
-| `:app:assembleDebug -PtelegramDataSource=real` | 0 | Real APK assembled; launch requires Telegram sign-in. |
-| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | 0 | 9 tests on `Pixel_9_Pro` API 36. |
+| `:app:testDebugUnitTest -PtelegramDataSource=fake` | 0 | 124 tests passed, 0 failures/errors; includes account-generation, range-prefix, cancellation, and late-update coverage. |
+| `:app:lintDebug` | 0 | Lint passed; warnings only. |
+| `:app:assembleDebug -PtelegramDataSource=fake` | 0 | Final fake APK produced; SHA-256 is recorded below. |
+| `:app:assembleDebug` (real default) | 0 | Real APK assembled; launch requires Telegram sign-in. |
+| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | 0 | 11 tests on `Pixel_9_Pro` API 36, 0 failures/errors. |
 
 After the final Gradle gates, the workspace was checked for Gradle daemon/test-worker
 processes; a stale daemon was terminated and no test worker remained.
@@ -44,12 +44,12 @@ Device: `Pixel_9_Pro` AVD, serial `emulator-5554`, API 36.
 - `android docs fetch "kb://android/topic/libraries/architecture/paging/v3-overview"` completed.
 - `android emulator list` and `adb devices` confirmed the emulator.
 - `android run --apks=<debug APK> --device=emulator-5554 --activity=com.nmtuong.telegramdrive.MainActivity` installed and launched the fake APK.
-- `android layout --pretty --output=docs/evidence/phase-3-gallery-final-layout.json` captured the gallery hierarchy.
-- `android screen capture --output=docs/evidence/phase-3-gallery-final.png` captured the Room-backed gallery.
-- Latest fake-device gallery hierarchy and screenshot are [`phase-3-current-gallery-layout.json`](evidence/phase-3-current-gallery-layout.json) and [`phase-3-current-gallery.png`](evidence/phase-3-current-gallery.png).
+- `android layout --pretty --output=docs/evidence/phase-3-final-fake-layout.json` captured the final fake hierarchy.
+- `android screen capture --output=docs/evidence/phase-3-final-fake.png` captured the final fake preflight.
+- Final fake-device preflight hierarchy and screenshot are [`phase-3-final-fake-layout.json`](evidence/phase-3-final-fake-layout.json) and [`phase-3-final-fake.png`](evidence/phase-3-final-fake.png). Authenticated gallery/video flows remain covered by connected tests and earlier fake gallery/video captures.
 - Latest fake-device Media3 video preview is [`phase-3-current-video.png`](evidence/phase-3-current-video.png).
-- Real preflight launch reached Telegram sign-in; hierarchy is in
-  `phase-3-real-preflight-layout.json`. No OTP/2FA or account data was entered.
+- Real preflight launch reached Telegram sign-in; hierarchy and screenshot are
+  [`phase-3-real-final-preflight-layout.json`](evidence/phase-3-real-final-preflight-layout.json) and [`phase-3-real-final-preflight.png`](evidence/phase-3-real-final-preflight.png). No OTP/2FA or account data was entered.
 - Fake login layouts: `phase-3-fake-code-layout.json`, `phase-3-fake-password-layout.json`.
 - Earlier gallery capture: `phase-3-gallery-fake-clean.png` and matching layout JSON.
 - Image viewer: `phase-3-image-viewer-final.png` and matching layout JSON show the fake
@@ -98,4 +98,5 @@ entry. The scope is not silently downgraded to full-download playback.
 ## APK
 
 - Expected final path: `android-app/app/build/outputs/apk/debug/app-debug.apk`.
-- Final SHA-256: `cd83a2a8026f74a7eb490345c60ff88ada0ed866d65d56ff208c6ecb7e113805`.
+- Final fake APK size: `70,108,044` bytes.
+- Final SHA-256: `3a29d5b542cf0f6cf33d3a2cdd690c88f71a819d050f83ac09cec3bc1483ae96`.

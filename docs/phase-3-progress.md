@@ -15,8 +15,8 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 - Implementation plan: [`docs/phase-3-plan.md`](phase-3-plan.md)
 - Final implementation commit: `3329d13` (`feat(android): implement phase 3 saved media gallery`).
 - Test coverage commit: `ace373a` (`test(android): add phase 3 media and streaming coverage`).
-- Evidence/documentation commit: `9fd8b0f`.
-- Latest repository hardening/evidence commit: `664f129` (`fix(android): harden phase 3 media lifecycle`).
+- Prior evidence/documentation commits: `9fd8b0f`, `e3c0a4c`, `bea623f`.
+- Latest lifecycle hardening commit: `3d0a15a` (`fix(android): harden phase 3 account and media lifecycle`).
 
 ## Implemented
 
@@ -38,22 +38,58 @@ worktree. It does not upgrade implementation evidence into real-account evidence
   Telegram file identity and shared until the last player datasource closes.
 - Logout/reset now cancel account-scoped thumbnail/original/range work before metadata
   cleanup; late `updateFile` events from the prior account generation are ignored.
+- Shared video data sources now release a stable-file coordinator by reference count;
+  closing one player cannot close a transfer still used by another player.
+- Cache reconciliation now rejects mismatched stable identities, preserves shared-file
+  metadata, clears all message references when a shared video cache is removed, and
+  evicts orphan cached-file rows safely.
+- Account mutation/reconciliation is serialized across scanner callbacks, logout/reset,
+  and late TDLib file updates. Unknown post-boundary file IDs stay blocked until an
+  explicit request; non-zero range downloads do not masquerade as contiguous prefixes.
+- Gallery sync status exposes phase, checkpoint/head watermark, last successful catch-up,
+  and retryable errors; image-open failures expose retry.
 - Existing source browser, document/audio/PDF/animation/external preview, transfer,
   auth, session, reset, and fake runtime paths remain available.
 - Android Auto Backup/device transfer remains disabled/excluded for database, TDLib
   session, key, cache, and downloaded media paths.
 
+## Actual architecture recorded for handoff
+
+- Room tables are `saved_media` (account ID/generation, chat/message identity, image
+  or video classification, date/caption/display name/MIME/dimensions/duration, TDLib
+  file IDs and stable remote identities, minithumbnail and local-path references),
+  `cached_file` (one physical thumbnail/original/partial file per account-scoped
+  stable identity, observed TDLib file ID/path/size/state/access time), and
+  `sync_state` (phase, head watermark, raw-history cursor, checkpoint time,
+  last-successful catch-up, error/retry metadata). Shared stable identities are
+  reference-counted by `saved_media`; Room cache state is reconciled with TDLib and
+  readable filesystem state before opening a file.
+- Sync state is `IDLE → HEAD_CAPTURED → BACKFILLING → CATCHING_UP → COMPLETED`, with
+  `ERROR`/retry metadata at any resumable stage. TDLib listeners UPSERT while the
+  checkpointed backfill runs; the original head watermark is retained until catch-up
+  commits, so a crash cannot discard the interval discovered during backfill.
+- Streaming is `Media3 → TdLibVideoDataSource → VideoStreamingCoordinator → TDLib
+  downloadFile(offset, limit) / updateFile → partial local file`. Buffer progress is
+  tracked separately from playback progress; stable-file transfers serialize ranges,
+  seek supersedes stale requests, and the final datasource close releases Media3,
+  cancels unneeded work, and asks TDLib to remove temporary video data.
+- Cache lifecycle is minithumbnail/placeholder during indexing, bounded lazy thumbnail
+  requests near the viewport, reconciled original on image open, and temporary partial
+  video data during playback. Logout/reset cancels account work before deleting the
+  account generation; Room, TDLib snapshots, and filesystem paths are reconciled on
+  restart and Android cache eviction.
+
 ## Verification evidence
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| `:app:testDebugUnitTest` | PASS, exit 0 | 121 tests completed in the latest run, including stale-file invalidation coverage. |
+| `:app:testDebugUnitTest` | PASS, exit 0 | 124 tests completed, 0 failures/errors; includes identity, stale-file, range-prefix, and finite cancellation-race coverage. |
 | `:app:lintDebug` | PASS, exit 0 | No lint errors; warnings only. |
-| `:app:assembleDebug -PtelegramDataSource=fake` | PASS, exit 0 | Final APK SHA-256: `cd83a2a8026f74a7eb490345c60ff88ada0ed866d65d56ff208c6ecb7e113805`. |
-| `:app:assembleDebug -PtelegramDataSource=real` | PASS, exit 0 | Real APK build is valid; launch stopped at Telegram sign-in and requires user credentials/OTP/2FA. |
-| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | PASS, exit 0 | 9 tests on `Pixel_9_Pro` API 36, including Room paging and existing Keystore coverage. |
+| `:app:assembleDebug -PtelegramDataSource=fake` | PASS, exit 0 | Final APK is 70,108,044 bytes; SHA-256: `3a29d5b542cf0f6cf33d3a2cdd690c88f71a819d050f83ac09cec3bc1483ae96`. |
+| `:app:assembleDebug` (real default) | PASS, exit 0 | Real APK build is valid; launch stopped at Telegram sign-in and requires user credentials/OTP/2FA. |
+| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | PASS, exit 0 | 11 tests on `Pixel_9_Pro` API 36, 0 failures/errors, including repository crash-resume/update and shared-video release tests. |
 | Fake runtime | PASS for fake scope | Current Room-backed gallery is captured in [`phase-3-current-gallery.png`](evidence/phase-3-current-gallery.png) with hierarchy in [`phase-3-current-gallery-layout.json`](evidence/phase-3-current-gallery-layout.json); fake Media3 video preview is captured in [`phase-3-current-video.png`](evidence/phase-3-current-video.png). Earlier image-viewer evidence remains valid. These are not real-TDLib progressive-streaming evidence. |
-| Android CLI | PASS | Deploy, layout, and screen capture completed; commands and paths are in the evidence manifest. |
+| Android CLI | PASS | Final fake APK deployed with `android run`; final layout and screenshot captured. |
 | Real Telegram account | NOT VERIFIED | Real preflight reaches sign-in; progressive spike, large-video seek, network recovery, and account logout remain `USER_INTERACTION_REQUIRED` / pending authorized real-account run. |
 
 ## Acceptance status
@@ -75,10 +111,12 @@ No fallback to full-download playback was used to mark these criteria complete.
 - The real-account feasibility spike must be run against an authorized account with a
   sufficiently large Telegram video and explicit user permission for read-only media
   verification. OTP/2FA or session authorization is `USER_INTERACTION_REQUIRED`.
-- Current preflight evidence is [`phase-3-real-preflight-layout.json`](evidence/phase-3-real-preflight-layout.json):
+- Latest preflight evidence is [`phase-3-real-final-preflight-layout.json`](evidence/phase-3-real-final-preflight-layout.json)
+  and [`phase-3-real-final-preflight.png`](evidence/phase-3-real-final-preflight.png):
   the real build requires Telegram sign-in before any account data can be inspected.
-- The current fake-device preflight hierarchy is [`phase-3-current-preflight-layout.json`](evidence/phase-3-current-preflight-layout.json);
-  it is explicitly fake-runtime evidence and does not satisfy the real-account gate.
+- The final fake-device preflight is [`phase-3-final-fake-layout.json`](evidence/phase-3-final-fake-layout.json)
+  with screenshot [`phase-3-final-fake.png`](evidence/phase-3-final-fake.png); it is
+  explicitly fake-runtime evidence and does not satisfy the real-account gate.
 - Codec/container support is delegated to Media3; unsupported media reports a player
   error through the existing preview surface.
 - The fake gallery dataset is intentionally small at runtime; the unit fake dataset
