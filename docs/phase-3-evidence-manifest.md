@@ -15,7 +15,8 @@ real-account gate. A file is not described as passing unless it was actually pro
 | Official plan | [`android-app/MASTER_PLAN.md`](../android-app/MASTER_PLAN.md) |
 | Detailed plan | [`docs/phase-3-plan.md`](phase-3-plan.md) |
 | Final implementation commit | `3329d13` (`feat(android): implement phase 3 saved media gallery`). |
-| Final evidence/documentation commit | Recorded after this evidence update. |
+| Test coverage commit | `ace373a` (`test(android): add phase 3 media and streaming coverage`). |
+| Final evidence/documentation commit | `9fd8b0f`; this handoff update is committed separately. |
 
 ## Commands and exit codes
 
