@@ -3,6 +3,11 @@
 - **Repository**: `nmtuong97/Telegram-Drive`
 - **Branch**: `agent/android-phase-2`
 - **CODE_SHA**: `e5874a0239803fb118bc4c2f39d9ead99d307f10`
+- **Evidence Commit SHA**: `47410afc04d309282a682ce1c23f2d48ac2eb6f8`
+- **APK Path**: `android-app/app/build/outputs/apk/debug/app-debug.apk`
+- **APK SHA-256**: `14928764c5d387e33f6a6f08d94c3b61feedc0644f16cf58536094e53654bbea`
+- **Android CLI Version**: `1.0.15498356`
+- **Device**: `Pixel_9_Pro` (`emulator-5554`)
 - **Date**: 2026-08-02
 
 ## Verified Codebase Findings Fixed
