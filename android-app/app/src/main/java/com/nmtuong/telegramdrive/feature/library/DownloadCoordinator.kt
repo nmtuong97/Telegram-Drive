@@ -21,7 +21,6 @@ import kotlinx.coroutines.Dispatchers
  */
 class DownloadCoordinator(
     private val repository: TelegramRepository,
-    scope: CoroutineScope,
     private val accountId: Long = 0L,
     private val databaseGeneration: Long = 1L,
     dispatcher: CoroutineDispatcher = Dispatchers.IO,

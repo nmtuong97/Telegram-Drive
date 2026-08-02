@@ -78,9 +78,13 @@ Tất cả AI Agent (Antigravity, Codex, Copilot, Subagents) khi làm việc tro
    - Sử dụng `android sdk list`, `android sdk install <package>`, `android emulator list`, `android emulator start <name>` để kiểm tra và quản lý môi trường Android SDK/AVD khi cần thiết.
 
 6. **Xác minh bắt buộc trước handoff (Mandatory Handoff Verification)**:
+   - Tại một thời điểm chỉ được có một Gradle invocation cho `android-app`.
+   - Agent phải kiểm tra process trước khi chạy Gradle và không được tự retry nếu invocation trước chưa terminate.
+   - Agent không được chạy biến thể `--info` và non-`--info` song song.
+   - Full test, lint và build phải chạy tuần tự qua script single-flight guard `./scripts/run-gradle-single-flight.sh`.
    - Không chạy lệnh gộp không giới hạn `./gradlew testDebugUnitTest lintDebug assembleDebug`.
    - Luôn chạy từng Gradle task riêng biệt có timeout và flags diagnostic:
-     - `./gradlew :app:testDebugUnitTest --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
-     - `./gradlew :app:lintDebug --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
-     - `./gradlew :app:assembleDebug -PtelegramDataSource=fake --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
+     - `./scripts/run-gradle-single-flight.sh :app:testDebugUnitTest --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
+     - `./scripts/run-gradle-single-flight.sh :app:lintDebug --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
+     - `./scripts/run-gradle-single-flight.sh :app:assembleDebug -PtelegramDataSource=fake --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
    - Dùng Android CLI/adb để install, launch, dump layout hoặc chụp screenshot trước khi báo hoàn tất công việc.

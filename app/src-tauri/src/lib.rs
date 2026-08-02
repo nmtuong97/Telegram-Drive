@@ -1062,6 +1062,7 @@ pub fn run() {
             migration::commands::cmd_migration_stop,
             migration::commands::cmd_migration_get_status,
             migration::commands::cmd_migration_get_resumable_job,
+            migration::commands::cmd_migration_list_jobs,
             migration::commands::cmd_migration_resume,
             migration::commands::cmd_migration_retry_failed,
             migration::commands::cmd_migration_reset_database,

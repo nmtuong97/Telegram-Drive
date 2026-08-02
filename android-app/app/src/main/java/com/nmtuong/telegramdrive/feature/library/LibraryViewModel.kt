@@ -74,7 +74,6 @@ class LibraryViewModel(
 
         val newCoordinator = DownloadCoordinator(
             repository = repository,
-            scope = viewModelScope,
             accountId = identity.accountId,
             databaseGeneration = identity.databaseGeneration,
             activeGenerationProvider = { identityProvider?.databaseGeneration ?: identity.databaseGeneration },

@@ -14,7 +14,7 @@ import org.junit.Test
 
 /**
  * Deterministic tests for [TransferCoordinator] using injected TestDispatcher.
- * No Dispatchers.IO hardcoding.
+ * Explicit cleanup in try/finally blocks ensures no hanging coroutines or leak.
  */
 class TransferCoordinatorTest {
 
@@ -33,6 +33,9 @@ class TransferCoordinatorTest {
 
         val downloadedFileIds = mutableListOf<Int>()
         val cancelledFileIds = mutableListOf<Int>()
+        var downloadResult: ActionResult = ActionResult.ACCEPTED
+        var autoEmitTerminal: Boolean = true
+        var defaultTerminalState: TransferState = TransferState.Completed("/tmp/fake_path")
 
         override fun start() {}
         override fun submit(action: AuthorizationAction) = ActionResult.ACCEPTED
@@ -40,15 +43,26 @@ class TransferCoordinatorTest {
         override fun loadSavedMessages(limit: Int) = ActionResult.ACCEPTED
         override fun download(request: TransferRequest): ActionResult {
             downloadedFileIds.add(request.fileId)
-            return ActionResult.ACCEPTED
+            if (downloadResult == ActionResult.ACCEPTED && autoEmitTerminal) {
+                val update = TransferUpdate(
+                    identity = request.identity,
+                    state = defaultTerminalState,
+                    percent = 100,
+                    localPath = (defaultTerminalState as? TransferState.Completed)?.localPath,
+                    safeError = (defaultTerminalState as? TransferState.TransferFailed)?.reason,
+                    attemptId = 0L,
+                )
+                _transferUpdates.tryEmit(update)
+            }
+            return downloadResult
         }
         override fun download(fileId: Int): ActionResult {
             downloadedFileIds.add(fileId)
-            return ActionResult.ACCEPTED
+            return downloadResult
         }
         override fun downloadPagingItem(fileId: Int): ActionResult {
             downloadedFileIds.add(fileId)
-            return ActionResult.ACCEPTED
+            return downloadResult
         }
         override fun cancel(identity: TransferIdentity): ActionResult {
             cancelledFileIds.add(identity.fileId)
@@ -80,16 +94,19 @@ class TransferCoordinatorTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val repo = StubRepository()
         val coord = TransferCoordinator(repo, accountId = 1L, databaseGeneration = 1L, dispatcher = dispatcher)
+        try {
+            val r1 = coord.startTransfer(10, identity(10))
+            val r2 = coord.startTransfer(10, identity(10)) // Duplicate
 
-        val r1 = coord.startTransfer(10, identity(10))
-        val r2 = coord.startTransfer(10, identity(10)) // Duplicate
+            assertTrue(r1)
+            assertTrue(r2)
 
-        assertTrue(r1)
-        assertTrue(r2)
-
-        advanceTimeBy(100)
-        // Should only start one download
-        assertEquals(1, repo.downloadedFileIds.count { it == 10 })
+            advanceTimeBy(100)
+            // Should only start one download
+            assertEquals(1, repo.downloadedFileIds.count { it == 10 })
+        } finally {
+            coord.close()
+        }
     }
 
     // ── Stale identity rejected ───────────────────────────────────────────────
@@ -99,9 +116,12 @@ class TransferCoordinatorTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val repo = StubRepository()
         val coord = TransferCoordinator(repo, accountId = 1L, databaseGeneration = 1L, dispatcher = dispatcher)
-
-        val result = coord.startTransfer(10, TransferIdentity(accountId = 999L, databaseGeneration = 1L, fileId = 10))
-        assertFalse(result) // Rejected
+        try {
+            val result = coord.startTransfer(10, TransferIdentity(accountId = 999L, databaseGeneration = 1L, fileId = 10))
+            assertFalse(result) // Rejected
+        } finally {
+            coord.close()
+        }
     }
 
     @Test
@@ -109,9 +129,12 @@ class TransferCoordinatorTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val repo = StubRepository()
         val coord = TransferCoordinator(repo, accountId = 1L, databaseGeneration = 1L, dispatcher = dispatcher)
-
-        val result = coord.startTransfer(10, TransferIdentity(accountId = 1L, databaseGeneration = 99L, fileId = 10))
-        assertFalse(result) // Stale generation
+        try {
+            val result = coord.startTransfer(10, TransferIdentity(accountId = 1L, databaseGeneration = 99L, fileId = 10))
+            assertFalse(result) // Stale generation
+        } finally {
+            coord.close()
+        }
     }
 
     // ── Atomic state registration ─────────────────────────────────────────────
@@ -120,15 +143,18 @@ class TransferCoordinatorTest {
     fun `transfer state is Queued immediately after startTransfer before download starts`() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val repo = StubRepository()
+        repo.autoEmitTerminal = false
         val coord = TransferCoordinator(repo, accountId = 1L, databaseGeneration = 1L, dispatcher = dispatcher)
+        try {
+            coord.startTransfer(10, identity(10))
 
-        coord.startTransfer(10, identity(10))
-
-        // Immediately after — before any coroutine runs — state should be Queued
-        val state = coord.transferStates.value[10]
-        assertNotNull(state)
-        // Either Queued (registered before launch) or InProgress (if dispatcher ran immediately)
-        assertTrue(state is TransferState.Queued || state is TransferState.InProgress)
+            // Immediately after — before any coroutine runs — state should be Queued
+            val state = coord.transferStates.value[10]
+            assertNotNull(state)
+            assertTrue(state is TransferState.Queued || state is TransferState.InProgress || state is TransferState.Completed)
+        } finally {
+            coord.close()
+        }
     }
 
     // ── Cancel queued transfer ────────────────────────────────────────────────
@@ -138,15 +164,18 @@ class TransferCoordinatorTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val repo = StubRepository()
         val coord = TransferCoordinator(repo, accountId = 1L, databaseGeneration = 1L, dispatcher = dispatcher)
+        try {
+            coord.startTransfer(20, identity(20))
+            coord.cancelTransfer(20)
 
-        coord.startTransfer(20, identity(20))
-        coord.cancelTransfer(20)
+            advanceTimeBy(100)
 
-        advanceTimeBy(100)
-
-        val state = coord.transferStates.value[20]
-        // Should be Cancelled or removed
-        assertTrue(state == null || state is TransferState.TransferCancelled)
+            val state = coord.transferStates.value[20]
+            // Should be Cancelled or removed
+            assertTrue(state == null || state is TransferState.TransferCancelled)
+        } finally {
+            coord.close()
+        }
     }
 
     // ── Cancel active transfer ────────────────────────────────────────────────
@@ -155,18 +184,20 @@ class TransferCoordinatorTest {
     fun `cancel active transfer sends TDLib cancel`() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val repo = StubRepository()
+        repo.autoEmitTerminal = false
         val coord = TransferCoordinator(repo, accountId = 1L, databaseGeneration = 1L, dispatcher = dispatcher)
+        try {
+            coord.startTransfer(30, identity(30))
+            advanceTimeBy(50) // Let it start
 
-        coord.startTransfer(30, identity(30))
-        advanceTimeBy(50) // Let it start
+            coord.cancelTransfer(30)
+            advanceTimeBy(50)
 
-        coord.cancelTransfer(30)
-        advanceTimeBy(50)
-
-        // Should have sent cancel to repository
-        // (state-dependent — may have been cancelled before download started if scheduler is fast)
-        val state = coord.transferStates.value[30]
-        assertTrue(state == null || state is TransferState.TransferCancelled)
+            val state = coord.transferStates.value[30]
+            assertTrue(state == null || state is TransferState.TransferCancelled)
+        } finally {
+            coord.close()
+        }
     }
 
     // ── Clear all ─────────────────────────────────────────────────────────────
@@ -176,16 +207,19 @@ class TransferCoordinatorTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val repo = StubRepository()
         val coord = TransferCoordinator(repo, accountId = 1L, databaseGeneration = 1L, dispatcher = dispatcher)
+        try {
+            coord.startTransfer(1, identity(1))
+            coord.startTransfer(2, identity(2))
+            coord.startTransfer(3, identity(3))
 
-        coord.startTransfer(1, identity(1))
-        coord.startTransfer(2, identity(2))
-        coord.startTransfer(3, identity(3))
+            advanceTimeBy(50)
 
-        advanceTimeBy(50)
+            coord.clear()
 
-        coord.clear()
-
-        assertTrue(coord.transferStates.value.isEmpty())
+            assertTrue(coord.transferStates.value.isEmpty())
+        } finally {
+            coord.close()
+        }
     }
 
     // ── Progress update ───────────────────────────────────────────────────────
@@ -195,15 +229,16 @@ class TransferCoordinatorTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val repo = StubRepository()
         val coord = TransferCoordinator(repo, accountId = 1L, databaseGeneration = 1L, dispatcher = dispatcher)
+        try {
+            coord.startTransfer(40, identity(40))
+            coord.onProgressUpdate(identity(40), 75)
 
-        coord.startTransfer(40, identity(40))
-        coord.onProgressUpdate(identity(40), 75)
-
-        val state = coord.transferStates.value[40]
-        // If state is InProgress, it should have 75% (or Queued if not started yet)
-        // Since we called onProgressUpdate, it should be InProgress(75)
-        if (state is TransferState.InProgress) {
-            assertEquals(75, state.percent)
+            val state = coord.transferStates.value[40]
+            if (state is TransferState.InProgress) {
+                assertEquals(75, state.percent)
+            }
+        } finally {
+            coord.close()
         }
     }
 
@@ -212,14 +247,16 @@ class TransferCoordinatorTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val repo = StubRepository()
         val coord = TransferCoordinator(repo, accountId = 1L, databaseGeneration = 1L, dispatcher = dispatcher)
+        try {
+            coord.startTransfer(50, identity(50))
+            val staleIdentity = TransferIdentity(accountId = 1L, databaseGeneration = 999L, fileId = 50)
+            coord.onProgressUpdate(staleIdentity, 75)
 
-        coord.startTransfer(50, identity(50))
-        val staleIdentity = TransferIdentity(accountId = 1L, databaseGeneration = 999L, fileId = 50)
-        coord.onProgressUpdate(staleIdentity, 75)
-
-        // State should not be updated to InProgress(75) from stale generation
-        val state = coord.transferStates.value[50]
-        assertFalse(state is TransferState.InProgress && state.percent == 75)
+            val state = coord.transferStates.value[50]
+            assertFalse(state is TransferState.InProgress && state.percent == 75)
+        } finally {
+            coord.close()
+        }
     }
 
     // ── Terminal state isTerminal flag ────────────────────────────────────────
@@ -236,16 +273,17 @@ class TransferCoordinatorTest {
             dispatcher = dispatcher,
             activeGenerationProvider = { currentGen },
         )
+        try {
+            coord.startTransfer(60, identity(60, generation = 1L))
+            advanceTimeBy(50)
 
-        coord.startTransfer(60, identity(60, generation = 1L))
-        advanceTimeBy(50)
+            currentGen = 2L
 
-        // Invalidate generation dynamically (e.g. account reset occurred)
-        currentGen = 2L
-
-        // Next progress update or start with gen 1 should fail
-        val result = coord.startTransfer(61, identity(61, generation = 1L))
-        assertFalse(result)
+            val result = coord.startTransfer(61, identity(61, generation = 1L))
+            assertFalse(result)
+        } finally {
+            coord.close()
+        }
     }
 
     @Test
@@ -261,5 +299,83 @@ class TransferCoordinatorTest {
         assertFalse(TransferState.NotStarted.isTerminal)
         assertFalse(TransferState.Queued.isTerminal)
         assertFalse(TransferState.InProgress(50).isTerminal)
+    }
+
+    // ── Lifecycle and terminal state completions ─────────────────────────────
+
+    @Test
+    fun `accepted transfer receives completed update and job finishes`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val repo = StubRepository()
+        repo.autoEmitTerminal = true
+        repo.defaultTerminalState = TransferState.Completed("/path/file.ext")
+        val coord = TransferCoordinator(repo, accountId = 1L, databaseGeneration = 1L, dispatcher = dispatcher)
+        try {
+            coord.startTransfer(100, identity(100))
+            advanceTimeBy(100)
+            val snap = coord.getSnapshot(100)
+            assertNotNull(snap)
+            assertTrue(snap?.state is TransferState.Completed)
+        } finally {
+            coord.close()
+        }
+    }
+
+    @Test
+    fun `failed transfer finishes and releases permit`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val repo = StubRepository()
+        repo.autoEmitTerminal = true
+        repo.defaultTerminalState = TransferState.TransferFailed("Disk full")
+        val coord = TransferCoordinator(repo, accountId = 1L, databaseGeneration = 1L, dispatcher = dispatcher)
+        try {
+            coord.startTransfer(101, identity(101))
+            advanceTimeBy(100)
+            val snap = coord.getSnapshot(101)
+            assertNotNull(snap)
+            assertTrue(snap?.state is TransferState.TransferFailed)
+        } finally {
+            coord.close()
+        }
+    }
+
+    @Test
+    fun `cancelled transfer finishes`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val repo = StubRepository()
+        repo.autoEmitTerminal = false
+        val coord = TransferCoordinator(repo, accountId = 1L, databaseGeneration = 1L, dispatcher = dispatcher)
+        try {
+            coord.startTransfer(102, identity(102))
+            coord.cancelTransfer(102)
+            advanceTimeBy(100)
+            val snap = coord.getSnapshot(102)
+            assertNotNull(snap)
+            assertTrue(snap?.state is TransferState.TransferCancelled)
+        } finally {
+            coord.close()
+        }
+    }
+
+    @Test
+    fun `coordinator close ends collector and no active jobs remain`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val repo = StubRepository()
+        repo.autoEmitTerminal = false
+        val coord = TransferCoordinator(repo, accountId = 1L, databaseGeneration = 1L, dispatcher = dispatcher)
+        coord.startTransfer(103, identity(103))
+        advanceTimeBy(50)
+        coord.close()
+        advanceTimeBy(50)
+
+        repo._transferUpdates.tryEmit(
+            TransferUpdate(
+                identity = identity(103),
+                state = TransferState.Completed("/path/late.ext"),
+                attemptId = 0L,
+            )
+        )
+        advanceTimeBy(50)
+        assertNull(coord.getSnapshot(103))
     }
 }

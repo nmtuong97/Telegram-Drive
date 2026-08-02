@@ -35,7 +35,7 @@ fn latest_resumable_job(conn: &sqlite::Connection) -> Result<Option<(i64, String
     let mut stmt = conn
         .prepare(
             "SELECT id, state FROM migration_jobs \
-             WHERE state IN ('running', 'stopped', 'waiting_for_quota') \
+             WHERE state IN ('running', 'stopped', 'waiting_for_quota', 'failed') \
              ORDER BY updated_at DESC, id DESC LIMIT 1",
         )
         .map_err(|e| e.to_string())?;
@@ -599,6 +599,50 @@ pub async fn cmd_migration_get_status(
 }
 
 #[tauri::command]
+pub async fn cmd_migration_list_jobs(
+    state: State<'_, MigrationState>,
+) -> Result<Vec<MigrationJob>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, source_folder_id, source_folder_path, telegram_destination_id, \
+             telegram_destination_name, local_backup_dir, workspace_dir, state, \
+             started_at, completed_at, last_error, flood_wait_until, \
+             discovered_folders, completed_folders, discovered_items, completed_items, \
+             failed_items, waiting_items, created_at, updated_at \
+             FROM migration_jobs ORDER BY id DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut jobs = Vec::new();
+    while let Ok(sqlite::State::Row) = stmt.next() {
+        jobs.push(MigrationJob {
+            id: stmt.read(0).unwrap_or(0),
+            source_folder_id: stmt.read(1).unwrap_or_default(),
+            source_folder_path: stmt.read(2).unwrap_or_default(),
+            telegram_destination_id: stmt.read(3).ok(),
+            telegram_destination_name: stmt.read(4).unwrap_or_default(),
+            local_backup_dir: stmt.read(5).unwrap_or_default(),
+            workspace_dir: stmt.read(6).unwrap_or_default(),
+            state: stmt.read(7).unwrap_or_default(),
+            started_at: stmt.read(8).unwrap_or(0),
+            completed_at: stmt.read(9).ok(),
+            last_error: stmt.read(10).ok(),
+            flood_wait_until: stmt.read(11).ok(),
+            discovered_folders: stmt.read(12).unwrap_or(0),
+            completed_folders: stmt.read(13).unwrap_or(0),
+            discovered_items: stmt.read(14).unwrap_or(0),
+            completed_items: stmt.read(15).unwrap_or(0),
+            failed_items: stmt.read(16).unwrap_or(0),
+            waiting_items: stmt.read(17).unwrap_or(0),
+            created_at: stmt.read(18).unwrap_or(0),
+            updated_at: stmt.read(19).unwrap_or(0),
+        });
+    }
+    Ok(jobs)
+}
+
+#[tauri::command]
 pub async fn cmd_migration_get_resumable_job(
     state: State<'_, MigrationState>,
 ) -> Result<Option<i64>, String> {
@@ -650,7 +694,7 @@ pub async fn cmd_migration_resume(
 
     if !matches!(
         job_state.as_str(),
-        "running" | "stopped" | "waiting_for_quota"
+        "running" | "stopped" | "waiting_for_quota" | "failed"
     ) {
         return Err(format!("Job cannot be resumed from state '{}'", job_state));
     }

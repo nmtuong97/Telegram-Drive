@@ -1,10 +1,12 @@
 package com.nmtuong.telegramdrive.feature.library
 
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import com.nmtuong.telegramdrive.data.FakeTelegramRepository
 import com.nmtuong.telegramdrive.data.fake.FakeTelegramCatalog
 import com.nmtuong.telegramdrive.domain.AuthorizationAction
 import com.nmtuong.telegramdrive.domain.AuthorizationState
-import com.nmtuong.telegramdrive.domain.FileSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -18,11 +20,8 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * LibraryViewModel tests — updated for CP2 (authorization-driven source loading).
- *
- * FakeTelegramRepository starts at WaitingForPhoneNumber.
- * Sources are only loaded after AuthorizationState.Ready.
- * Tests drive the fake through authorization before checking sources.
+ * LibraryViewModel tests — updated for CP2 & CP6.
+ * Uses ViewModelStore to trigger onCleared() naturally via store.clear() in try/finally blocks.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class LibraryViewModelTest {
@@ -39,6 +38,19 @@ class LibraryViewModelTest {
         Dispatchers.resetMain()
     }
 
+    private fun createViewModel(
+        repo: FakeTelegramRepository,
+        store: ViewModelStore
+    ): LibraryViewModel {
+        val factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                return LibraryViewModel(repo, repo.identityProvider) as T
+            }
+        }
+        return ViewModelProvider(store, factory)[LibraryViewModel::class.java]
+    }
+
     /** Helper: drive FakeTelegramRepository to Ready via phone/code/password flow */
     private fun FakeTelegramRepository.reachReady() {
         submit(AuthorizationAction.SubmitPhone("+1234567890"))
@@ -53,78 +65,102 @@ class LibraryViewModelTest {
     fun `loadSources loads available sources and defaults to Saved Messages after Ready`() = runTest {
         val catalog = FakeTelegramCatalog.stable()
         val repo = FakeTelegramRepository(catalog, dispatcher = testDispatcher)
-        val viewModel = LibraryViewModel(repo, repo.identityProvider)
+        val store = ViewModelStore()
+        try {
+            val viewModel = createViewModel(repo, store)
 
-        // CP2: Sources NOT loaded yet — not Ready
-        runCurrent()
-        assertEquals(0, viewModel.sources.value.size)
-        assertNull(viewModel.selectedSourceId.value)
+            // CP2: Sources NOT loaded yet — not Ready
+            runCurrent()
+            assertEquals(0, viewModel.sources.value.size)
+            assertNull(viewModel.selectedSourceId.value)
 
-        // Drive to Ready — ViewModel observes and loads sources
-        repo.reachReady()
-        runCurrent()
+            // Drive to Ready — ViewModel observes and loads sources
+            repo.reachReady()
+            runCurrent()
 
-        assertEquals(3, viewModel.sources.value.size)
-        assertEquals(10L, viewModel.selectedSourceId.value) // Saved Messages has ID 10
-        repo.close()
+            assertEquals(3, viewModel.sources.value.size)
+            assertEquals(10L, viewModel.selectedSourceId.value) // Saved Messages has ID 10
+        } finally {
+            store.clear()
+            runCurrent()
+            repo.close()
+        }
     }
 
     @Test
     fun `selectSource updates selectedSourceId`() = runTest {
         val catalog = FakeTelegramCatalog.stable()
         val repo = FakeTelegramRepository(catalog, dispatcher = testDispatcher)
-        val viewModel = LibraryViewModel(repo, repo.identityProvider)
+        val store = ViewModelStore()
+        try {
+            val viewModel = createViewModel(repo, store)
 
-        repo.reachReady()
-        runCurrent()
+            repo.reachReady()
+            runCurrent()
 
-        viewModel.selectSource(11L) // Design Assets
-        runCurrent()
+            viewModel.selectSource(11L) // Design Assets
+            runCurrent()
 
-        assertEquals(11L, viewModel.selectedSourceId.value)
-        repo.close()
+            assertEquals(11L, viewModel.selectedSourceId.value)
+        } finally {
+            store.clear()
+            runCurrent()
+            repo.close()
+        }
     }
 
     @Test
     fun `download and cancel delegate to coordinator`() = runTest {
         val catalog = FakeTelegramCatalog.stable()
         val repo = FakeTelegramRepository(catalog, dispatcher = testDispatcher)
-        val viewModel = LibraryViewModel(repo, repo.identityProvider)
+        val store = ViewModelStore()
+        try {
+            val viewModel = createViewModel(repo, store)
 
-        repo.reachReady()
-        runCurrent()
+            repo.reachReady()
+            runCurrent()
 
-        viewModel.download(100)
-        runCurrent()
+            viewModel.download(100)
+            runCurrent()
 
-        val stateAfterStart = viewModel.transferStates.value[100]
-        assertNotNull(stateAfterStart)
+            val stateAfterStart = viewModel.transferStates.value[100]
+            assertNotNull(stateAfterStart)
 
-        viewModel.cancel(100)
-        runCurrent()
+            viewModel.cancel(100)
+            runCurrent()
 
-        val stateAfterCancel = viewModel.transferStates.value[100]
-        assertTrue(stateAfterCancel == null || stateAfterCancel.isTerminal)
-        repo.close()
+            val stateAfterCancel = viewModel.transferStates.value[100]
+            assertTrue(stateAfterCancel == null || stateAfterCancel.isTerminal)
+        } finally {
+            store.clear()
+            runCurrent()
+            repo.close()
+        }
     }
 
     @Test
     fun `sources cleared on logout`() = runTest {
         val catalog = FakeTelegramCatalog.stable()
         val repo = FakeTelegramRepository(catalog, dispatcher = testDispatcher)
-        val viewModel = LibraryViewModel(repo, repo.identityProvider)
+        val store = ViewModelStore()
+        try {
+            val viewModel = createViewModel(repo, store)
 
-        repo.reachReady()
-        runCurrent()
+            repo.reachReady()
+            runCurrent()
 
-        assertEquals(3, viewModel.sources.value.size)
+            assertEquals(3, viewModel.sources.value.size)
 
-        // Logout — sources should be cleared
-        viewModel.logout()
-        runCurrent()
+            // Logout — sources should be cleared
+            viewModel.logout()
+            runCurrent()
 
-        assertEquals(0, viewModel.sources.value.size)
-        assertNull(viewModel.selectedSourceId.value)
-        repo.close()
+            assertEquals(0, viewModel.sources.value.size)
+            assertNull(viewModel.selectedSourceId.value)
+        } finally {
+            store.clear()
+            runCurrent()
+            repo.close()
+        }
     }
 }
