@@ -51,14 +51,16 @@ class MediaAccessCoordinator(
 ) : Closeable {
   private val scope = CoroutineScope(SupervisorJob() + dispatcher)
   private val thumbnailSemaphore = Semaphore(MAX_THUMBNAIL_CONCURRENCY)
-  private val inFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
-  private val activeVideoTransfers = mutableMapOf<String, ActiveVideoTransfer>()
+  private val inFlight = ConcurrentHashMap<AccessKey, kotlinx.coroutines.Deferred<String?>>()
+  private val activeVideoTransfers = mutableMapOf<AccessKey, ActiveVideoTransfer>()
 
   suspend fun ensureThumbnail(entity: SavedMediaEntity): String? {
     val fileId = entity.thumbnailFileId ?: return null
     val identity = identityProvider.currentIdentity.value ?: return null
+    if (!entity.belongsTo(identity)) return null
     val stableIdentity = entity.thumbnailStableFileIdentity ?: "tdlib-file:$fileId"
-    return deduplicated(stableIdentity) {
+    val key = AccessKey(identity, stableIdentity)
+    return deduplicated(key) {
       thumbnailSemaphore.withPermit {
         val cached = database.cachedFileDao().find(identity.accountId, identity.databaseGeneration, stableIdentity)
         cached?.localPath?.let(::File)?.takeIf { it.isFile && it.canRead() }?.absolutePath?.let {
@@ -66,21 +68,22 @@ class MediaAccessCoordinator(
           evictThumbnailCache(identity)
           return@withPermit it
         }
-        val snapshot = waitForCompleteFile(fileId, stableIdentity, CachedFileType.THUMBNAIL)
+        val snapshot = waitForCompleteFile(identity, fileId, stableIdentity, CachedFileType.THUMBNAIL)
         snapshot?.localPath?.takeIf { File(it).isFile && File(it).canRead() }?.also {
           evictThumbnailCache(identity)
         }
       }
-    }
+    }?.takeIf { identityProvider.currentIdentity.value == identity }
   }
 
   suspend fun openOriginal(entity: SavedMediaEntity): MediaOpenResult {
     val identity = identityProvider.currentIdentity.value
       ?: return MediaOpenResult.Failed("Telegram account is not ready")
+    if (!entity.belongsTo(identity)) return MediaOpenResult.Failed("Media belongs to another Telegram account")
     val stableIdentity = entity.originalStableFileIdentity
     return try {
-      if (entity.mediaType == "VIDEO") return prepareVideo(entity)
-      deduplicated(stableIdentity) {
+      if (entity.mediaType == "VIDEO") return prepareVideo(entity, identity)
+      deduplicated(AccessKey(identity, stableIdentity)) {
         val currentSnapshot = gateway.getFileSnapshot(entity.telegramFileId)
         val currentPath = currentSnapshot
           ?.takeIf { isCompleteReadable(it, stableIdentity) }
@@ -90,12 +93,13 @@ class MediaAccessCoordinator(
           ?.absolutePath
         if (currentPath != null) return@deduplicated currentPath
         val snapshot = waitForCompleteFile(
+          identity = identity,
           fileId = entity.telegramFileId,
           stableIdentity = stableIdentity,
           type = if (entity.mediaType == "IMAGE") CachedFileType.IMAGE_ORIGINAL else CachedFileType.VIDEO_COMPLETE,
         )
         snapshot?.localPath?.takeIf { File(it).isFile && File(it).canRead() }
-      }?.let { path ->
+      }?.takeIf { identityProvider.currentIdentity.value == identity }?.let { path ->
         database.withTransaction {
           database.savedMediaDao().updateLocalState(
             identity.accountId,
@@ -114,7 +118,8 @@ class MediaAccessCoordinator(
     }
   }
 
-  private suspend fun prepareVideo(entity: SavedMediaEntity): MediaOpenResult {
+  private suspend fun prepareVideo(entity: SavedMediaEntity, identity: AccountSessionIdentity): MediaOpenResult {
+    if (identityProvider.currentIdentity.value != identity) return MediaOpenResult.Failed("Telegram account is not ready")
     val stableIdentity = entity.originalStableFileIdentity
     return try {
       val existing = gateway.getFileSnapshot(entity.telegramFileId)
@@ -144,7 +149,8 @@ class MediaAccessCoordinator(
               .first()
           }
         }
-      persistSnapshot(partial, stableIdentity, CachedFileType.VIDEO_PARTIAL, CachedFileState.PARTIAL)
+      if (identityProvider.currentIdentity.value != identity) return MediaOpenResult.Failed("Telegram account changed while preparing media")
+      persistSnapshot(identity, partial, stableIdentity, CachedFileType.VIDEO_PARTIAL, CachedFileState.PARTIAL)
       MediaOpenResult.Opened(partial.localPath!!)
     } catch (error: Exception) {
       MediaOpenResult.Failed(error.message?.takeIf { it.isNotBlank() } ?: "Video initial buffer failed")
@@ -153,35 +159,38 @@ class MediaAccessCoordinator(
 
   fun videoDataSourceFactory(entity: SavedMediaEntity): DataSource.Factory = TdLibVideoDataSource.Factory(
     coordinatorFactory = { _: DataSpec ->
+      val ownerIdentity = AccountSessionIdentity(entity.accountId, entity.databaseGeneration)
+      check(identityProvider.currentIdentity.value == ownerIdentity) { "Telegram account changed while opening video" }
+      val key = AccessKey(ownerIdentity, entity.originalStableFileIdentity)
       synchronized(activeVideoTransfers) {
-        activeVideoTransfers.getOrPut(entity.originalStableFileIdentity) {
+        activeVideoTransfers.getOrPut(key) {
           ActiveVideoTransfer(
             coordinator = VideoStreamingCoordinator(
               gateway = gateway,
               fileId = entity.telegramFileId,
               stableFileIdentity = entity.originalStableFileIdentity,
-              onClosed = { scope.launch { clearVideoCache(entity) } },
+              onClosed = { scope.launch { clearVideoCache(entity, ownerIdentity) } },
             ),
           )
         }.also { it.references++ }.coordinator
       }
     },
     releaseFactory = { _: DataSpec, _: VideoStreamingCoordinator ->
-      { releaseVideoTransfer(entity.originalStableFileIdentity) }
+      { releaseVideoTransfer(AccessKey(entity.accountId, entity.databaseGeneration, entity.originalStableFileIdentity)) }
     },
   )
 
-  private fun releaseVideoTransfer(stableIdentity: String) {
+  private fun releaseVideoTransfer(key: AccessKey) {
     val transfer = synchronized(activeVideoTransfers) {
-      val current = activeVideoTransfers[stableIdentity] ?: return
+      val current = activeVideoTransfers[key] ?: return
       current.references--
-      if (current.references <= 0) activeVideoTransfers.remove(stableIdentity) else null
+      if (current.references <= 0) activeVideoTransfers.remove(key) else null
     }
     transfer?.coordinator?.close()
   }
 
-  private suspend fun clearVideoCache(entity: SavedMediaEntity) {
-    val identity = identityProvider.currentIdentity.value ?: return
+  private suspend fun clearVideoCache(entity: SavedMediaEntity, identity: AccountSessionIdentity) {
+    if (identityProvider.currentIdentity.value != identity) return
     database.withTransaction {
       database.savedMediaDao().clearLocalPathForStableFile(
         identity.accountId,
@@ -196,13 +205,14 @@ class MediaAccessCoordinator(
   }
 
   private suspend fun waitForCompleteFile(
+    identity: AccountSessionIdentity,
     fileId: Int,
     stableIdentity: String,
     type: CachedFileType,
   ): TdLibFileSnapshot? {
     gateway.getFileSnapshot(fileId)?.let { snapshot ->
       if (isCompleteReadable(snapshot, stableIdentity)) {
-        persistSnapshot(snapshot, stableIdentity, type, CachedFileState.COMPLETE)
+        persistSnapshot(identity, snapshot, stableIdentity, type, CachedFileState.COMPLETE)
         return snapshot
       }
     }
@@ -210,7 +220,7 @@ class MediaAccessCoordinator(
     if (requestResult != ActionResult.ACCEPTED) return null
     gateway.getFileSnapshot(fileId)?.let { snapshot ->
       if (isCompleteReadable(snapshot, stableIdentity)) {
-        persistSnapshot(snapshot, stableIdentity, type, CachedFileState.COMPLETE)
+        persistSnapshot(identity, snapshot, stableIdentity, type, CachedFileState.COMPLETE)
         return snapshot
       }
     }
@@ -219,7 +229,7 @@ class MediaAccessCoordinator(
         .filter { it.fileId == fileId && isCompleteReadable(it, stableIdentity) }
         .first()
     }
-    persistSnapshot(completed, stableIdentity, type, CachedFileState.COMPLETE)
+    persistSnapshot(identity, completed, stableIdentity, type, CachedFileState.COMPLETE)
     return completed
   }
 
@@ -233,12 +243,13 @@ class MediaAccessCoordinator(
     snapshot.stableFileIdentity == null || snapshot.stableFileIdentity == stableIdentity
 
   private suspend fun persistSnapshot(
+    identity: AccountSessionIdentity,
     snapshot: TdLibFileSnapshot,
     stableIdentity: String,
     type: CachedFileType,
     state: CachedFileState,
   ) {
-    val identity = identityProvider.currentIdentity.value ?: return
+    if (identityProvider.currentIdentity.value != identity) return
     database.cachedFileDao().upsert(
       CachedFileEntity(
         accountId = identity.accountId,
@@ -293,14 +304,14 @@ class MediaAccessCoordinator(
     transfers.forEach(VideoStreamingCoordinator::close)
   }
 
-  private suspend fun deduplicated(identity: String, block: suspend () -> String?): String? {
+  private suspend fun deduplicated(key: AccessKey, block: suspend () -> String?): String? {
     val deferred = synchronized(inFlight) {
-      inFlight[identity] ?: scope.async { block() }.also { inFlight[identity] = it }
+      inFlight[key] ?: scope.async { block() }.also { inFlight[key] = it }
     }
     return try {
       deferred.await()
     } finally {
-      if (deferred.isCompleted) inFlight.remove(identity, deferred)
+      if (deferred.isCompleted) inFlight.remove(key, deferred)
     }
   }
 
@@ -315,6 +326,19 @@ class MediaAccessCoordinator(
     val coordinator: VideoStreamingCoordinator,
     var references: Int = 0,
   )
+
+  private data class AccessKey(
+    val identity: AccountSessionIdentity,
+    val stableFileIdentity: String,
+  ) {
+    constructor(accountId: Long, databaseGeneration: Long, stableFileIdentity: String) : this(
+      AccountSessionIdentity(accountId, databaseGeneration),
+      stableFileIdentity,
+    )
+  }
+
+  private fun SavedMediaEntity.belongsTo(identity: AccountSessionIdentity): Boolean =
+    accountId == identity.accountId && databaseGeneration == identity.databaseGeneration
 
   private companion object {
     const val MAX_THUMBNAIL_CONCURRENCY = 2

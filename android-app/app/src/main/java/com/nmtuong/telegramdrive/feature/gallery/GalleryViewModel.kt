@@ -51,8 +51,7 @@ class GalleryViewModel(
   init {
     repository.start()
     viewModelScope.launch {
-      val chatId = repository.currentChatId()
-      if (chatId != null) repository.observeSyncState(chatId).collect { _syncState.value = it }
+      repository.observeCurrentSyncState().collect { _syncState.value = it }
     }
     refreshSync()
   }

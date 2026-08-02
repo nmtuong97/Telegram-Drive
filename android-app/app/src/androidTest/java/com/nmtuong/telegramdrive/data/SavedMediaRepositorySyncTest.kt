@@ -15,10 +15,13 @@ import com.nmtuong.telegramdrive.domain.SavedMessageUpdate
 import com.nmtuong.telegramdrive.domain.TdLibFileSnapshot
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.collectIndexed
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
@@ -96,6 +99,30 @@ class SavedMediaRepositorySyncTest {
       while (database.savedMediaDao().find(42L, 1L, 900L, 998L)?.deleted != true) delay(10)
     }
     assertTrue(database.savedMediaDao().find(42L, 1L, 900L, 1_100L) != null)
+    repository.close()
+  }
+
+  @Test
+  fun galleryPagingRebindsWhenAccountIdentityChanges() = runBlocking {
+    val identityProvider = AccountSessionIdentityProvider().also { it.initializeFake(42L) }
+    val gateway = ScriptedSavedMediaGateway(chatId = 900L, messages = emptyList())
+    val repository = SavedMediaRepository(database, gateway, identityProvider)
+    val firstEmission = CompletableDeferred<Unit>()
+    val secondEmission = CompletableDeferred<Unit>()
+    val pagingJob = launch {
+      repository.paging(GalleryQuery()).collectIndexed { index, _ ->
+        when (index) {
+          0 -> firstEmission.complete(Unit)
+          1 -> secondEmission.complete(Unit)
+        }
+      }
+    }
+
+    withTimeout(2_000L) { firstEmission.await() }
+    identityProvider.updateAccount(99L)
+    withTimeout(2_000L) { secondEmission.await() }
+
+    pagingJob.cancel()
     repository.close()
   }
 }

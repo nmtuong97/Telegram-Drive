@@ -33,6 +33,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -63,7 +65,7 @@ class SavedMediaRepository(
   private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : Closeable {
   private val scope = CoroutineScope(SupervisorJob() + dispatcher)
-  private val activeChatId = AtomicReference<Long?>(null)
+  private val activeChatId = MutableStateFlow<Long?>(null)
   private val updateJob = MutableStateFlow<Job?>(null)
   private val syncMutex = Mutex()
   private val accountMutationMutex = Mutex()
@@ -77,6 +79,7 @@ class SavedMediaRepository(
     if (updateJob.value?.isActive == true) return
     reconciliationJob = scope.launch {
       identityProvider.currentIdentity.collect { identity ->
+        activeChatId.value = null
         if (identity != null) reconcileAccount(identity)
       }
     }
@@ -85,8 +88,16 @@ class SavedMediaRepository(
     }
   }
 
-  fun paging(query: GalleryQuery): Flow<PagingData<SavedMediaEntity>> {
-    val identity = identityProvider.currentIdentity.value ?: return kotlinx.coroutines.flow.flowOf(PagingData.empty())
+  @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+  fun paging(query: GalleryQuery): Flow<PagingData<SavedMediaEntity>> =
+    identityProvider.currentIdentity.flatMapLatest { identity ->
+      if (identity == null) flowOf(PagingData.empty()) else pagingForIdentity(identity, query)
+    }
+
+  private fun pagingForIdentity(
+    identity: AccountSessionIdentity,
+    query: GalleryQuery,
+  ): Flow<PagingData<SavedMediaEntity>> {
     val mediaType = when (query.mediaFilter) {
       GalleryMediaFilter.ALL -> ""
       GalleryMediaFilter.IMAGE -> SavedMediaType.IMAGE.name
@@ -113,6 +124,18 @@ class SavedMediaRepository(
     return database.syncStateDao().observe(identity.accountId, identity.databaseGeneration, chatId)
   }
 
+  @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+  fun observeCurrentSyncState(): Flow<SyncStateEntity?> =
+    identityProvider.currentIdentity.flatMapLatest { identity ->
+      activeChatId.flatMapLatest { chatId ->
+        if (identity == null || chatId == null) {
+          flowOf(null)
+        } else {
+          database.syncStateDao().observe(identity.accountId, identity.databaseGeneration, chatId)
+        }
+      }
+    }
+
   suspend fun currentChatId(): Long? = gateway.getSavedMessagesChatId()
 
   suspend fun syncSavedMessages(): SavedMediaSyncResult = syncMutex.withLock {
@@ -127,7 +150,7 @@ class SavedMediaRepository(
 
   /** Cancels the scanner before logout/reset so it cannot repopulate old-generation rows. */
   fun cancelCurrentAccountWork() {
-    activeChatId.set(null)
+    activeChatId.value = null
     accountCancellationEpoch.incrementAndGet()
     activeSyncJob.get()?.cancel()
   }
@@ -137,7 +160,7 @@ class SavedMediaRepository(
       ?: return@withContext SavedMediaSyncResult.Failed("Telegram account is not ready", retryable = false)
     val chatId = gateway.getSavedMessagesChatId()
       ?: return@withContext SavedMediaSyncResult.Failed("Saved Messages is not available")
-    activeChatId.set(chatId)
+    activeChatId.value = chatId
     reconcileAccount(identity)
 
     val existing = database.syncStateDao().find(identity.accountId, identity.databaseGeneration, chatId)
@@ -297,7 +320,7 @@ class SavedMediaRepository(
 
   private suspend fun applyUpdate(update: SavedMessageUpdate) {
     val identity = identityProvider.currentIdentity.value ?: return
-    val chatId = activeChatId.get() ?: return
+    val chatId = activeChatId.value ?: return
     val updateChatId = when (update) {
       is SavedMessageUpdate.Upsert -> update.chatId
       is SavedMessageUpdate.Changed -> update.chatId
