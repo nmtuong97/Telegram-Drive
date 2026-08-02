@@ -30,6 +30,8 @@ full-download fallback to satisfy Phase 3.
 - The coordinator tests also reject a TDLib-complete snapshot whose local file is
   shorter than the expected size, and prove that a seek supersedes a waiting range
   request immediately rather than waiting for the range timeout.
+- A shared stable-file coordinator now keeps independent playback cursors for
+  multiple Media3 datasources while serializing their TDLib range transfers.
 - The fake Room/runtime wiring reaches the gallery and uses a Media3 factory for
   video items; it is not evidence of TDLib behavior.
 - Connected instrumentation now also proves repository crash-resume/incremental

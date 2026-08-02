@@ -19,7 +19,8 @@ real-account gate. A file is not described as passing unless it was actually pro
 | Evidence/documentation commit | `9fd8b0f`, `e3c0a4c`, `bea623f`. |
 | Latest lifecycle hardening commit | `3d0a15a` (`fix(android): harden phase 3 account and media lifecycle`). |
 | Latest account-isolation/gallery-flow commit | `730e2b1` (`fix(android): scope gallery flows to account identity`). |
-| Latest implementation commit | `3466de3` (`fix(android): cancel stale video range waits`). |
+| Previous range-cancellation hardening commit | `3466de3` (`fix(android): cancel stale video range waits`). |
+| Latest implementation commit | `305b309` (`fix(android): harden phase 3 media cache and readers`). |
 
 ## Commands and exit codes
 
@@ -29,7 +30,7 @@ All Gradle invocations were run one at a time through
 
 | Command | Exit code | Notes |
 | --- | ---: | --- |
-| `:app:testDebugUnitTest -PtelegramDataSource=fake` | 0 | 126 tests passed, 0 failures/errors/skips; includes account-generation, range-prefix, complete-file-size, cancellation, and late-update coverage. |
+| `:app:testDebugUnitTest -PtelegramDataSource=fake` | 0 | 129 tests passed, 0 failures/errors/skips; includes account-generation, range-prefix, LRU eviction, complete-file-size, independent-reader, cancellation, and late-update coverage. |
 | `:app:lintDebug` | 0 | Lint passed; warnings only. |
 | `:app:assembleDebug -PtelegramDataSource=fake` | 0 | Final fake APK produced; SHA-256 is recorded below. |
 | `:app:assembleDebug` (real default) | 0 | Real APK assembled; launch requires Telegram sign-in. |
@@ -49,6 +50,7 @@ Device: `TelegramDrive_Small` AVD, serial `emulator-5554`, API 36.
 - `android layout --pretty --output=docs/evidence/phase-3-final-layout.json` captured the current fake hierarchy.
 - `android screen capture --output=docs/evidence/phase-3-final-runtime.png --annotate` captured the current fake preflight.
 - Current fake-device preflight hierarchy and screenshot are [`phase-3-final-layout.json`](evidence/phase-3-final-layout.json) and [`phase-3-final-runtime.png`](evidence/phase-3-final-runtime.png). The captured screen is sign-in because no fake session was seeded; authenticated gallery/video flows remain covered by connected tests and earlier fake gallery/video captures.
+- A later emulator session check also remained at Telegram sign-in: [`phase-3-current-session-layout.json`](evidence/phase-3-current-session-layout.json) and [`phase-3-current-session.png`](evidence/phase-3-current-session.png).
 - Resumed fake-device sign-in hierarchy and screenshot are [`phase-3-resumed-runtime-layout.json`](evidence/phase-3-resumed-runtime-layout.json) and [`phase-3-resumed-runtime.png`](evidence/phase-3-resumed-runtime.png); no Telegram credentials were entered.
 - Latest fake-device Media3 video preview is [`phase-3-current-video.png`](evidence/phase-3-current-video.png).
 - Real preflight launch reached Telegram sign-in; hierarchy and screenshot are
@@ -74,6 +76,7 @@ Device: `TelegramDrive_Small` AVD, serial `emulator-5554`, API 36.
 
 - Unit message mapping: `PhaseThreeMessageMappingTest.kt` plus existing mapper tests.
 - Unit progressive range/seek/cancel cleanup: `VideoStreamingCoordinatorTest.kt`.
+- Unit LRU thumbnail eviction: `MediaAccessCoordinatorTest.kt`.
 - TDLib logout/reset stale-file invalidation: `TdLibJsonGatewayTest.logoutInvalidatesFileSnapshotsAndBlocksLateUpdates`.
 - Unit 3,000-item fake history with duplicate stable file identities and video document
   metadata: `FakeSavedMediaGatewayTest.kt`.
@@ -101,5 +104,5 @@ entry. The scope is not silently downgraded to full-download playback.
 ## APK
 
 - Expected final path: `android-app/app/build/outputs/apk/debug/app-debug.apk`.
-- Final fake APK size: `70,112,344` bytes.
-- Final SHA-256: `4147ea63f73434d8fd0196e7b41df5b4d85ddd9290d8de0d5740fc9abcda1f89`.
+- Final fake APK size: `70,112,513` bytes.
+- Final SHA-256: `0c212bc00da69e358aa6c16cb4c4e735d4c644bbce18e187d02882bdb33029d5`.
