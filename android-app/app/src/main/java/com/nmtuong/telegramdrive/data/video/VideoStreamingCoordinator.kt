@@ -1,5 +1,6 @@
 package com.nmtuong.telegramdrive.data.video
 
+import android.util.Log
 import com.nmtuong.telegramdrive.domain.SavedMediaGateway
 import androidx.media3.common.util.UnstableApi
 import androidx.annotation.OptIn
@@ -24,6 +25,12 @@ import kotlinx.coroutines.withTimeout
 
 private const val DEFAULT_RANGE_SIZE_BYTES = 512L * 1024L
 private const val DEFAULT_WAIT_TIMEOUT_MS = 30_000L
+private const val STREAMING_LOG_TAG = "TelegramDrive.Streaming"
+
+private fun streamingLog(message: String) {
+  // Android local JVM tests may expose a throwing Log stub; diagnostics are best effort.
+  runCatching { Log.i(STREAMING_LOG_TAG, message) }
+}
 
 enum class VideoStreamingState { IDLE, BUFFERING, PLAYING, SEEKING, COMPLETE, ERROR, CLOSED }
 
@@ -93,6 +100,7 @@ class VideoStreamingCoordinator(
   suspend fun readAt(readPosition: Long, buffer: ByteArray, offset: Int, length: Int): Int {
     if (closed.get()) return androidx.media3.common.C.RESULT_END_OF_INPUT
     if (length == 0) return 0
+    streamingLog("readRequest stable=$stableFileIdentity position=$readPosition length=$length")
     return mutex.withLock {
       val generation = requestGeneration.get()
       val available = awaitReadableRange(generation, readPosition, length.toLong())
@@ -113,6 +121,11 @@ class VideoStreamingCoordinator(
         expectedSizeBytes = available.expectedSizeBytes,
         error = null,
       )
+      streamingLog(
+        "readReady stable=$stableFileIdentity position=$readPosition bytes=$read " +
+            "prefix=${available.downloadedPrefixSizeBytes} expected=${available.expectedSizeBytes} " +
+            "complete=${available.isDownloadingCompleted}",
+      )
       read
     }
   }
@@ -123,6 +136,7 @@ class VideoStreamingCoordinator(
     val generation = requestGeneration.incrementAndGet()
     generationState.value = generation
     gateway.cancelFileRange(fileId)
+    streamingLog("seek stable=$stableFileIdentity position=${positionBytes}")
     _status.value = _status.value.copy(
       state = VideoStreamingState.SEEKING,
       positionBytes = positionBytes,
@@ -202,6 +216,7 @@ class VideoStreamingCoordinator(
     generationState.value = generation
     gateway.cancelFileRange(fileId)
     gateway.deleteTemporaryFile(fileId)
+    streamingLog("close stable=$stableFileIdentity fileId=$fileId temporaryCleanupRequested=true")
     _status.value = _status.value.copy(state = VideoStreamingState.CLOSED)
     onClosed()
   }

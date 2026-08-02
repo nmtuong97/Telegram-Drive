@@ -1,6 +1,7 @@
 package com.nmtuong.telegramdrive.telegram
 
 import android.content.Context
+import android.util.Log
 import com.nmtuong.telegramdrive.data.AccountSessionIdentityProvider
 import com.nmtuong.telegramdrive.domain.*
 
@@ -35,6 +36,7 @@ private const val CLOSE_TIMEOUT_MS = 20_000L
 private const val LOGOUT_TIMEOUT_MS = 30_000L
 private const val AUTH_ACTION_TIMEOUT_MS = 15_000L
 private const val MAX_PARAMETER_ATTEMPTS = 2
+private const val STREAMING_LOG_TAG = "TelegramDrive.Streaming"
 
 /**
  * Safety limit for filtered empty page scanning.
@@ -75,6 +77,14 @@ private fun safeNetworkMessage(message: String): String {
     if (isNetworkFailure(message)) return "Network unavailable. Check your connection and retry."
     return SensitiveDataRedactor.redact(message).takeIf { it.isNotBlank() }
         ?: "Telegram request failed"
+}
+
+private fun streamingLog(message: String) {
+    // Structured, account-safe diagnostics for the real-account streaming spike.
+    // Do not include Telegram message text, captions, phone numbers, or file paths.
+    // Local JVM tests use the Android stub, where Log methods may throw; diagnostics
+    // must never affect transfer behavior or test termination.
+    runCatching { Log.i(STREAMING_LOG_TAG, message) }
 }
 
 private data class PendingTransferContext(
@@ -1126,6 +1136,10 @@ class TdLibJsonGateway internal constructor(
         val prefix = local?.long("downloaded_prefix_size") ?: 0L
         val offset = local?.long("download_offset") ?: 0L
         val complete = local?.bool("is_downloading_completed") == true
+        val remoteIdentity = file.obj("remote")?.string("unique_id")?.takeIf { it.isNotBlank() }
+            ?: file.obj("remote")?.string("id")?.takeIf { it.isNotBlank() }
+            ?: "unknown"
+        val localBytes = path?.let { File(it).length() } ?: 0L
         val snapshot = TdLibFileSnapshot(
             fileId = fileId,
             stableFileIdentity = file.obj("remote")?.string("unique_id")?.takeIf { it.isNotBlank() }
@@ -1140,6 +1154,10 @@ class TdLibJsonGateway internal constructor(
             isReadable = path != null && File(path).isFile && (complete || downloaded > 0L),
         )
         fileSnapshots[fileId] = snapshot
+        streamingLog(
+            "updateFile fileId=$fileId remote=$remoteIdentity expected=$expected downloaded=$downloaded " +
+                "prefix=$prefix offset=$offset complete=$complete localBytes=$localBytes readable=${snapshot.isReadable}",
+        )
         mutableFileUpdates.tryEmit(snapshot)
     }
 
@@ -1288,7 +1306,12 @@ class TdLibJsonGateway internal constructor(
             put("limit", limitBytes.coerceAtLeast(0L))
             put("synchronous", false)
         })
-        return if (sendOrFail(request)) ActionResult.ACCEPTED else ActionResult.INVALID_STATE
+        val accepted = sendOrFail(request)
+        streamingLog(
+            "downloadFile range fileId=$fileId offset=${offsetBytes.coerceAtLeast(0L)} " +
+                "limit=${limitBytes.coerceAtLeast(0L)} priority=${priority.coerceIn(1, 32)} accepted=$accepted",
+        )
+        return if (accepted) ActionResult.ACCEPTED else ActionResult.INVALID_STATE
     }
 
     override fun cancelFileRange(fileId: Int): ActionResult {
@@ -1298,7 +1321,9 @@ class TdLibJsonGateway internal constructor(
             put("file_id", fileId)
             put("only_if_pending", false)
         })
-        return if (sendOrFail(request)) ActionResult.ACCEPTED else ActionResult.INVALID_STATE
+        val accepted = sendOrFail(request)
+        streamingLog("cancelDownloadFile range fileId=$fileId accepted=$accepted")
+        return if (accepted) ActionResult.ACCEPTED else ActionResult.INVALID_STATE
     }
 
     override fun deleteTemporaryFile(fileId: Int): ActionResult {
@@ -1311,7 +1336,9 @@ class TdLibJsonGateway internal constructor(
             put("@type", "deleteFile")
             put("file_id", fileId)
         })
-        return if (sendOrFail(request)) ActionResult.ACCEPTED else ActionResult.INVALID_STATE
+        val accepted = sendOrFail(request)
+        streamingLog("deleteFile temporary fileId=$fileId accepted=$accepted")
+        return if (accepted) ActionResult.ACCEPTED else ActionResult.INVALID_STATE
     }
 
     override suspend fun getAvailableSources(): List<FileSource> {
