@@ -21,7 +21,8 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 - Previous range-cancellation hardening commit: `3466de3` (`fix(android): cancel stale video range waits`).
 - Previous media-cache/reader hardening commit: `305b309` (`fix(android): harden phase 3 media cache and readers`).
 - Previous implementation commit: `1224709` (`fix(android): add non-destructive media database migration`).
-- Latest implementation commit: `995cf5b` (`fix(android): prevent dropped saved message updates`).
+- Previous update-delivery commit: `995cf5b` (`fix(android): prevent dropped saved message updates`).
+- Latest implementation commit: `ad07249` (`fix(android): add retryable video buffering state`).
 
 ## Implemented
 
@@ -54,6 +55,9 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 - Saved-message TDLib updates use an unbounded channel with suspending-flow delivery,
   so listener bursts are not silently dropped; account-boundary invalidation drains
   queued updates before the next generation can consume them.
+- Video preview reports buffering state and exposes retry after a Media3/TDLib error;
+  retry recreates the player and permits a missing stale partial path to be reconciled
+  and requested again by the TDLib data source.
 - Thumbnail/video deduplication and cleanup are keyed by account identity plus stable
   remote file identity; Paging and sync-state observation rebind on identity changes,
   preventing stale gallery rows or callbacks from crossing account generations.
@@ -97,7 +101,7 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 | --- | --- | --- |
 | `:app:testDebugUnitTest -PtelegramDataSource=fake` | PASS, exit 0 | 131 tests completed, 0 failures/errors/skips; includes saved-message update burst delivery/account-boundary draining, LRU thumbnail eviction, complete-file-size validation, independent shared-reader cursors, and seek supersession without waiting for the timeout. |
 | `:app:lintDebug` | PASS, exit 0 | No lint errors; warnings only. |
-| `:app:assembleDebug -PtelegramDataSource=fake` | PASS, exit 0 | Final APK is 70,146,979 bytes; SHA-256: `c197889f7dcdb805b2a32a07398c0e98419c3728f73bae60cf1d67de651b7e87`. |
+| `:app:assembleDebug -PtelegramDataSource=fake` | PASS, exit 0 | Final APK is 70,146,979 bytes; SHA-256: `ba5f3fac6fe36b84c51aa42fc9428bf229403b05c4a07c2b97a95add5839f22a`. |
 | `:app:assembleDebug` (real default) | PASS, exit 0 | Current source also assembles real APK; launch stopped at Telegram sign-in and requires user credentials/OTP/2FA. |
 | `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | PASS, exit 0 | 13 tests on `TelegramDrive_Small` API 36, 0 failures/errors/skips, including Room 1→2 migration, account-scoped Paging rebinding, repository crash-resume/update, and shared-video release tests. |
 | Fake runtime | PASS for fake scope | Current Room-backed gallery is captured in [`phase-3-current-gallery.png`](evidence/phase-3-current-gallery.png) with hierarchy in [`phase-3-current-gallery-layout.json`](evidence/phase-3-current-gallery-layout.json); fake Media3 video preview is captured in [`phase-3-current-video.png`](evidence/phase-3-current-video.png). Resumed fake APK sign-in state is captured in [`phase-3-resumed-runtime.png`](evidence/phase-3-resumed-runtime.png) with hierarchy in [`phase-3-resumed-runtime-layout.json`](evidence/phase-3-resumed-runtime-layout.json). Earlier image-viewer evidence remains valid. These are not real-TDLib progressive-streaming evidence. |
@@ -109,8 +113,8 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 Implemented in code: roadmap, Room model and migration, checkpointed sync,
 incremental update contract with burst-safe delivery, Room Paging/search/filter/sort,
 month labels, thumbnail/original lifecycle, TDLib range coordinator, shared-file
-serialization, account-scoped metadata cleanup, fake/instrumented/unit coverage, lint,
-and debug build.
+serialization, account-scoped metadata cleanup, retryable video buffering UI,
+fake/instrumented/unit coverage, lint, and debug build.
 
 Not accepted yet: proof on a real Telegram account that TDLib partial/range download
 starts a large video before completion, seek works across unavailable ranges, network
