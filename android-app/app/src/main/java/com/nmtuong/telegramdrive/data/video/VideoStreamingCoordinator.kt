@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
@@ -52,6 +54,7 @@ class VideoStreamingCoordinator(
   private val mutex = Mutex()
   private val closed = AtomicBoolean(false)
   private val requestGeneration = AtomicLong(0L)
+  private val generationState = MutableStateFlow(0L)
   private val _status = MutableStateFlow(VideoStreamingStatus())
   val status: StateFlow<VideoStreamingStatus> = _status.asStateFlow()
 
@@ -62,7 +65,8 @@ class VideoStreamingCoordinator(
     check(!closed.get()) { "Video streaming coordinator is closed" }
     positionBytes = position.coerceAtLeast(0L)
     lengthBytes = length.coerceAtLeast(0L)
-    requestGeneration.incrementAndGet()
+    val generation = requestGeneration.incrementAndGet()
+    generationState.value = generation
     _status.value = VideoStreamingStatus(positionBytes = positionBytes, requestedBytes = lengthBytes)
     return lengthBytes.takeIf { it > 0L } ?: androidx.media3.common.C.LENGTH_UNSET.toLong()
   }
@@ -99,7 +103,8 @@ class VideoStreamingCoordinator(
   fun seek(position: Long) {
     if (closed.get()) return
     positionBytes = position.coerceAtLeast(0L)
-    requestGeneration.incrementAndGet()
+    val generation = requestGeneration.incrementAndGet()
+    generationState.value = generation
     gateway.cancelFileRange(fileId)
     _status.value = _status.value.copy(
       state = VideoStreamingState.SEEKING,
@@ -131,14 +136,22 @@ class VideoStreamingCoordinator(
         if (isReadableFor(snapshot, position, desiredEnd)) return snapshot
       }
       withTimeout(waitTimeoutMs) {
-        gateway.fileUpdates
-          .filter { snapshot ->
-            snapshot.fileId == fileId &&
-              !closed.get() &&
-              generation == requestGeneration.get() &&
-              isReadableFor(snapshot, position, desiredEnd)
-          }
-          .first()
+        when (val result = merge(
+          gateway.fileUpdates
+            .filter { snapshot ->
+              snapshot.fileId == fileId &&
+                !closed.get() &&
+                generation == requestGeneration.get() &&
+                isReadableFor(snapshot, position, desiredEnd)
+            }
+            .map(AwaitResult::Snapshot),
+          generationState
+            .filter { it != generation }
+            .map { AwaitResult.Superseded },
+        ).first()) {
+          is AwaitResult.Snapshot -> result.value
+          AwaitResult.Superseded -> throw CancellationException("Video range superseded")
+        }
       }
     } catch (error: Exception) {
       if (error is CancellationException) throw error
@@ -155,7 +168,11 @@ class VideoStreamingCoordinator(
     if (snapshot.stableFileIdentity != null && snapshot.stableFileIdentity != stableFileIdentity) return false
     val path = snapshot.localPath?.let(::File) ?: return false
     if (!path.isFile || !path.canRead()) return false
-    if (snapshot.isDownloadingCompleted) return true
+    val localSize = path.length()
+    if (localSize < endExclusive) return false
+    if (snapshot.isDownloadingCompleted) {
+      return snapshot.expectedSizeBytes <= 0L || localSize >= snapshot.expectedSizeBytes
+    }
     val contiguousPrefix = startInclusive <= snapshot.downloadedPrefixSizeBytes && snapshot.downloadedPrefixSizeBytes >= endExclusive
     val requestedRangeEnd = snapshot.downloadOffsetBytes + snapshot.downloadedSizeBytes
     val requestedRange = snapshot.downloadOffsetBytes <= startInclusive && requestedRangeEnd >= endExclusive
@@ -164,11 +181,17 @@ class VideoStreamingCoordinator(
 
   override fun close() {
     if (!closed.compareAndSet(false, true)) return
-    requestGeneration.incrementAndGet()
+    val generation = requestGeneration.incrementAndGet()
+    generationState.value = generation
     gateway.cancelFileRange(fileId)
     gateway.deleteTemporaryFile(fileId)
     _status.value = _status.value.copy(state = VideoStreamingState.CLOSED)
     onClosed()
+  }
+
+  private sealed interface AwaitResult {
+    data class Snapshot(val value: com.nmtuong.telegramdrive.domain.TdLibFileSnapshot) : AwaitResult
+    data object Superseded : AwaitResult
   }
 
 }

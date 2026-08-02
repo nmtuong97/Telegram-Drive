@@ -11,7 +11,10 @@ import java.nio.file.Files
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -49,6 +52,53 @@ class VideoStreamingCoordinatorTest {
     assertEquals(1, gateway.deleteCalls)
     assertEquals(VideoStreamingState.CLOSED, coordinator.status.value.state)
     root.deleteRecursively()
+  }
+
+  @Test
+  fun rejectsCompletedSnapshotWhenLocalFileIsShorterThanExpected() = runTest {
+    val root = Files.createTempDirectory("tdlib-stream-short-").toFile()
+    val path = root.resolve("video.partial").also {
+      it.writeBytes(byteArrayOf(1, 2, 3, 4))
+    }
+    val gateway = ShortCompletedFileGateway(path)
+    val coordinator = VideoStreamingCoordinator(
+      gateway = gateway,
+      fileId = 78,
+      stableFileIdentity = "remote-unique:short-video",
+      waitTimeoutMs = 100L,
+    )
+
+    coordinator.open(0L, -1L)
+    val result = runCatching { coordinator.readAt(ByteArray(4), 0, 4) }
+
+    assertTrue(result.isFailure)
+    assertEquals(1, gateway.rangeRequests)
+    coordinator.close()
+    root.deleteRecursively()
+  }
+
+  @Test
+  fun seekSupersedesAWaitingRangeWithoutWaitingForTimeout() = runTest {
+    val gateway = BlockingRangeGateway()
+    val coordinator = VideoStreamingCoordinator(
+      gateway = gateway,
+      fileId = 79,
+      stableFileIdentity = "remote-unique:blocking-video",
+      waitTimeoutMs = 2_000L,
+    )
+
+    coordinator.open(0L, -1L)
+    val read = async { coordinator.readAt(ByteArray(32), 0, 32) }
+    withTimeout(1_000L) {
+      while (gateway.rangeRequests == 0) delay(10L)
+    }
+
+    coordinator.seek(4_096L)
+    val result = withTimeout(1_000L) { runCatching { read.await() } }
+
+    assertTrue(result.isFailure)
+    assertTrue(gateway.cancelCalls > 0)
+    coordinator.close()
   }
 }
 
@@ -100,4 +150,59 @@ private class RangeGateway(
     snapshot = null
     return ActionResult.ACCEPTED
   }
+}
+
+private class ShortCompletedFileGateway(
+  private val path: File,
+) : SavedMediaGateway {
+  private val events = MutableSharedFlow<TdLibFileSnapshot>(replay = 1, extraBufferCapacity = 1)
+  var rangeRequests: Int = 0
+
+  override val fileUpdates: Flow<TdLibFileSnapshot> = events.asSharedFlow()
+  override val savedMessageUpdates: Flow<SavedMessageUpdate> = MutableSharedFlow<SavedMessageUpdate>().asSharedFlow()
+  override suspend fun getSavedMessagesChatId(): Long? = null
+  override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage = HistoryPage.empty()
+  override suspend fun getFileSnapshot(fileId: Int): TdLibFileSnapshot = TdLibFileSnapshot(
+    fileId = fileId,
+    stableFileIdentity = "remote-unique:short-video",
+    localPath = path.absolutePath,
+    expectedSizeBytes = 10L,
+    downloadedSizeBytes = 10L,
+    downloadedPrefixSizeBytes = 10L,
+    downloadOffsetBytes = 0L,
+    isDownloadingCompleted = true,
+    isReadable = true,
+  )
+
+  override fun requestFileRange(fileId: Int, offsetBytes: Long, limitBytes: Long, priority: Int): ActionResult {
+    rangeRequests++
+    return ActionResult.INVALID_STATE
+  }
+
+  override fun cancelFileRange(fileId: Int): ActionResult = ActionResult.ACCEPTED
+  override fun deleteTemporaryFile(fileId: Int): ActionResult = ActionResult.ACCEPTED
+}
+
+private class BlockingRangeGateway : SavedMediaGateway {
+  private val events = MutableSharedFlow<TdLibFileSnapshot>(extraBufferCapacity = 1)
+  var rangeRequests: Int = 0
+  var cancelCalls: Int = 0
+
+  override val fileUpdates: Flow<TdLibFileSnapshot> = events.asSharedFlow()
+  override val savedMessageUpdates: Flow<SavedMessageUpdate> = MutableSharedFlow<SavedMessageUpdate>().asSharedFlow()
+  override suspend fun getSavedMessagesChatId(): Long? = null
+  override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage = HistoryPage.empty()
+  override suspend fun getFileSnapshot(fileId: Int): TdLibFileSnapshot? = null
+
+  override fun requestFileRange(fileId: Int, offsetBytes: Long, limitBytes: Long, priority: Int): ActionResult {
+    rangeRequests++
+    return ActionResult.ACCEPTED
+  }
+
+  override fun cancelFileRange(fileId: Int): ActionResult {
+    cancelCalls++
+    return ActionResult.ACCEPTED
+  }
+
+  override fun deleteTemporaryFile(fileId: Int): ActionResult = ActionResult.ACCEPTED
 }

@@ -237,7 +237,13 @@ class MediaAccessCoordinator(
     snapshot.isDownloadingCompleted &&
       snapshot.isReadable &&
       (snapshot.stableFileIdentity == null || snapshot.stableFileIdentity == stableIdentity) &&
-      snapshot.localPath?.let { File(it).isFile && File(it).canRead() } == true
+      snapshot.localPath?.let { path ->
+        File(path).let { file ->
+          file.isFile && file.canRead() &&
+            file.length() > 0L &&
+            (snapshot.expectedSizeBytes <= 0L || file.length() >= snapshot.expectedSizeBytes)
+        }
+      } == true
 
   private fun isSnapshotForStableIdentity(snapshot: TdLibFileSnapshot, stableIdentity: String): Boolean =
     snapshot.stableFileIdentity == null || snapshot.stableFileIdentity == stableIdentity
