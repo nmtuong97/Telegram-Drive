@@ -1,11 +1,11 @@
 # Phase 3 TDLib progressive-streaming feasibility spike
 
-Status: `PENDING — USER_INTERACTION_REQUIRED`
+Status: `BLOCKED — DEPLOYMENT_APPROVAL_REQUIRED`
 
-Preflight evidence: the real build assembled successfully, but the emulator is at
-Telegram sign-in in [`phase-3-real-final-preflight-layout.json`](evidence/phase-3-real-final-preflight-layout.json)
-and [`phase-3-real-final-preflight.png`](evidence/phase-3-real-final-preflight.png); no phone,
-OTP, 2FA password, or Telegram data mutation was performed.
+The new real build assembled successfully but was not installed. The already-installed
+package can relaunch into the real Saved Media gallery without OTP; that is not
+evidence for the new source revision. No phone, OTP, 2FA password, or Telegram data
+mutation was performed.
 
 The production path is implemented as:
 
@@ -46,12 +46,16 @@ required user-authorized run, not evidence that the run passed.
   multiple Media3 datasources while serializing their TDLib range transfers.
 - The fake Room/runtime wiring reaches the gallery and uses a Media3 factory for
   video items; it is not evidence of TDLib behavior.
-- Connected instrumentation now also proves repository crash-resume/incremental
-  updates and shared `TdLibVideoDataSource` release behavior; these remain fake or
-  injected-gateway evidence, not proof of a real Telegram partial download.
+- Historical connected instrumentation covered repository crash-resume/incremental
+  updates and shared `TdLibVideoDataSource` release behavior; current additions
+  compile but were not run, and all remain fake or injected-gateway evidence rather
+  than proof of a real Telegram partial download.
 - The latest fake-device gallery/video captures are [`phase-3-current-gallery.png`](evidence/phase-3-current-gallery.png)
   and [`phase-3-current-video.png`](evidence/phase-3-current-video.png); they remain
   explicitly non-evidence for the real TDLib progressive-streaming gate.
+- The current source adds Media3-style reopen cancellation and late-update tests;
+  instrumented tests compile but were not run because only the real-session emulator
+  is available.
 
 ## Required real Telegram run
 
@@ -67,4 +71,6 @@ a video large enough that the initial request cannot complete the file:
 7. repeat after process restart and logout/reset checks.
 
 Until this run is completed, the progressive-streaming acceptance criterion remains
-unverified. OTP/2FA or an explicit user-authorized session is `USER_INTERACTION_REQUIRED`.
+unverified. Deployment is blocked by
+`DEPLOYMENT_APPROVAL_REQUIRED — SESSION_PRESERVING_UPDATE`; real logout/reset remains
+`NOT_EXECUTED — USER_POLICY_SESSION_PRESERVATION`.

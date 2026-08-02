@@ -2,9 +2,10 @@
 
 ## Baseline and scope
 
-- Baseline branch: `agent/android-phase-2`.
-- Baseline commit: `72325e101f201a8ce5a4c7786142f91c8ac00783`.
-- Working branch: `agent/android-phase-3`.
+- Canonical branch: `main`.
+- Main merge baseline for this goal: `b41b7e9f302e0336a7eb16565f636a98fc6223fd`.
+- Phase 2 baseline commit `72325e101f201a8ce5a4c7786142f91c8ac00783` remains historical implementation lineage.
+- Working branch: `main` (Phase 3 is merged but remains unaccepted until the real-account gates pass).
 - Official product specification: [`android-app/MASTER_PLAN.md`](../android-app/MASTER_PLAN.md).
 - Existing Phase 2 changes/evidence in the working tree are preserved and are not part
   of the Phase 3 implementation diff.

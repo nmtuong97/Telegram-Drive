@@ -2,15 +2,18 @@
 
 Status: `BLOCKED — PHASE_3_NOT_COMPLETE`
 
-This report records only evidence produced in the current `agent/android-phase-3`
-worktree. It does not upgrade implementation evidence into real-account evidence.
+This report records evidence from the canonical `main` checkout and the current
+uncommitted defect-closure worktree. It does not upgrade implementation evidence
+into real-account evidence.
 
 ## Baseline and source of truth
 
 - Repository: `nmtuong97/Telegram-Drive`
-- Baseline branch: `agent/android-phase-2`
-- Baseline commit: `72325e101f201a8ce5a4c7786142f91c8ac00783`
-- Working branch: `agent/android-phase-3`
+- Canonical branch: `main`
+- Starting/final checked-out main HEAD for this goal: `b41b7e9f302e0336a7eb16565f636a98fc6223fd`
+- Phase 2 merge parent: `4b85d69074772f076ffdd11e2fafe546b027981c`
+- Phase 3 implementation tip merged into main: `26891616cd745862d3a7149ee80f5eea41fb38d3`
+- Phase 2/3 branch commits listed below are historical implementation lineage.
 - Official Master Plan: [`android-app/MASTER_PLAN.md`](../android-app/MASTER_PLAN.md)
 - Implementation plan: [`docs/phase-3-plan.md`](phase-3-plan.md)
 - Initial implementation commit: `3329d13` (`feat(android): implement phase 3 saved media gallery`).
@@ -72,6 +75,20 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 - Android Auto Backup/device transfer remains disabled/excluded for database, TDLib
   session, key, cache, and downloaded media paths.
 
+## Defect-closure work in this goal
+
+- Catch-up now captures a target head per pass, commits `(previousTarget, target]`,
+  advances the lower bound only after that interval is checkpointed, and resumes from
+  the committed target after an interruption.
+- `TdLibVideoDataSource.read()` returns Media3 EOF before changing position,
+  remaining bytes, or transfer metrics; non-positive non-EOF results fail safely.
+- Shared video readers now have per-datasource cancellation handles, so closing A
+  cancels A's pending range while B keeps the stable-file coordinator alive.
+- Regression tests cover one/multiple head increases, bounded instability,
+  crash-between-pass resume, EOF, and Media3 reopen/late-update behavior. The
+  instrumented tests compile but were not run because only the real-session emulator
+  is available.
+
 ## Actual architecture recorded for handoff
 
 - Room tables are `saved_media` (account ID/generation, chat/message identity, image
@@ -103,22 +120,21 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| `:app:testDebugUnitTest -PtelegramDataSource=fake` | PASS, exit 0 | 131 tests completed, 0 failures/errors/skips; includes saved-message update burst delivery/account-boundary draining, LRU thumbnail eviction, complete-file-size validation, independent shared-reader cursors, and seek supersession without waiting for the timeout. |
-| `:app:lintDebug` | PASS, exit 0 | No lint errors; warnings only. |
-| `:app:assembleDebug -PtelegramDataSource=fake` | PASS, exit 0 | Final APK is 70,146,979 bytes; SHA-256: `b7ed93ea191e6f7ca38baece46d269f77e2f5d70f74da52cb5a9ab6ebe6f8673`. |
-| `:app:assembleDebug` (real default) | PASS, exit 0 | Current source also assembles real APK; launch stopped at Telegram sign-in and requires user credentials/OTP/2FA. |
-| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | PASS, exit 0 | 13 tests on `TelegramDrive_Small` API 36, 0 failures/errors/skips, including Room 1→2 migration, account-scoped Paging rebinding, repository crash-resume/update, and shared-video release tests. |
+| `:app:testDebugUnitTest -PtelegramDataSource=fake` | PASS, exit 0, ~14.0s | 132 tests, 0 failures/errors/skips. |
+| `:app:compileDebugAndroidTestKotlin -PtelegramDataSource=fake` | PASS, exit 0, ~10.5s | New repository and Media3 lifecycle tests compile; instrumentation was not run. |
+| `:app:lintDebug` | PASS, exit 0, ~9.0s | No lint errors; existing warnings only. |
+| `:app:assembleDebug -PtelegramDataSource=fake` | PASS, exit 0, ~10.1s | Fake debug APK assembled; it was not deployed. |
+| `:app:assembleDebug` | PASS, exit 0, ~4.3s | Real debug APK assembled; it was not deployed. |
+| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | NOT RUN | Only `Pixel_9_Pro` / `emulator-5554` is available and is reserved for the real Telegram session. |
 | Fake runtime | PASS for fake scope | Current Room-backed gallery is captured in [`phase-3-current-gallery.png`](evidence/phase-3-current-gallery.png) with hierarchy in [`phase-3-current-gallery-layout.json`](evidence/phase-3-current-gallery-layout.json); fake Media3 video preview is captured in [`phase-3-current-video.png`](evidence/phase-3-current-video.png). Resumed fake APK sign-in state is captured in [`phase-3-resumed-runtime.png`](evidence/phase-3-resumed-runtime.png) with hierarchy in [`phase-3-resumed-runtime-layout.json`](evidence/phase-3-resumed-runtime-layout.json). Earlier image-viewer evidence remains valid. These are not real-TDLib progressive-streaming evidence. |
-| Android CLI | PASS | Final fake APK deployed with `android run`; current sign-in layout and annotated screenshots are [`phase-3-final-layout.json`](evidence/phase-3-final-layout.json), [`phase-3-final-runtime.png`](evidence/phase-3-final-runtime.png), and the later session check [`phase-3-current-session-layout.json`](evidence/phase-3-current-session-layout.json) / [`phase-3-current-session.png`](evidence/phase-3-current-session.png). |
-| Real Telegram account | NOT VERIFIED | Real preflight reaches sign-in; progressive spike, large-video seek, network recovery, and account logout remain `USER_INTERACTION_REQUIRED` / pending authorized real-account run. |
+| Android CLI / installed runtime | LIMITED PASS | Read-only package inspection plus force-stop/relaunch of installed version `1.0` returned to Saved Media without OTP; no new APK was installed. Layout was captured only to `/tmp` and is not evidence for this source revision. |
+| Real Telegram account | NOT VERIFIED | New-source gallery sync, image/video lifecycle, progressive streaming, seek, network recovery, storage, and incremental mutation remain unverified. |
 
 ## Acceptance status
 
-Implemented in code: roadmap, Room model and migration, checkpointed sync,
-incremental update contract with burst-safe delivery, Room Paging/search/filter/sort,
-month labels, thumbnail/original lifecycle, TDLib range coordinator, shared-file
-serialization, account-scoped metadata cleanup, retryable video buffering UI,
-fake/instrumented/unit coverage, lint, and debug build.
+Implemented in code and locally checked: the existing Phase 3 slice plus the three
+P0 defect closures described above; unit tests, Android-test compilation, lint, and
+fake/real debug builds pass.
 
 Not accepted yet: proof on a real Telegram account that TDLib partial/range download
 starts a large video before completion, seek works across unavailable ranges, network
@@ -132,9 +148,14 @@ No fallback to full-download playback was used to mark these criteria complete.
 - The real-account feasibility spike must be run against an authorized account with a
   sufficiently large Telegram video and explicit user permission for read-only media
   verification. OTP/2FA or session authorization is `USER_INTERACTION_REQUIRED`.
-- Latest preflight evidence is [`phase-3-real-final-preflight-layout.json`](evidence/phase-3-real-final-preflight-layout.json)
-  and [`phase-3-real-final-preflight.png`](evidence/phase-3-real-final-preflight.png):
-  the real build requires Telegram sign-in before any account data can be inspected.
+- The installed package relaunch reached the real Saved Media gallery, but this is
+  evidence for the installed package, not the newly assembled APK.
+- New-source device validation is blocked by
+  `DEPLOYMENT_APPROVAL_REQUIRED — SESSION_PRESERVING_UPDATE`; no install or replace
+  command was run.
+- `NOT_EXECUTED — USER_POLICY_SESSION_PRESERVATION` applies to real logout/reset.
+- `USER_INTERACTION_REQUIRED — TEST_MESSAGE_MUTATION` applies to new/edit/delete
+  Telegram message verification.
 - The current fake-device preflight is [`phase-3-final-layout.json`](evidence/phase-3-final-layout.json)
   with screenshot [`phase-3-final-runtime.png`](evidence/phase-3-final-runtime.png); it is
   explicitly fake-runtime sign-in evidence and does not satisfy the real-account gate.
@@ -143,3 +164,5 @@ No fallback to full-download playback was used to mark these criteria complete.
 - The fake gallery dataset is intentionally small at runtime; the unit fake dataset
   contains 3,000 multi-year image/video/document-video-classified records and duplicate
   file identities. Room instrumentation covers 2,000 rows without collecting all rows.
+- Historical Phase 2 evidence was privacy-audited and contains account-specific text
+  in tracked layout/manifests; it is not reclassified as sanitized by this goal.

@@ -9,9 +9,10 @@ real-account gate. A file is not described as passing unless it was actually pro
 
 | Item | Value |
 | --- | --- |
-| Baseline branch | `agent/android-phase-2` |
-| Baseline commit | `72325e101f201a8ce5a4c7786142f91c8ac00783` |
-| Working branch | `agent/android-phase-3` |
+| Canonical branch | `main` |
+| Starting/final checked-out main HEAD | `b41b7e9f302e0336a7eb16565f636a98fc6223fd` (uncommitted fixes in worktree) |
+| Phase 2 merge parent | `4b85d69074772f076ffdd11e2fafe546b027981c` |
+| Phase 3 merge commit | `b41b7e9f302e0336a7eb16565f636a98fc6223fd` (historical implementation tip `26891616cd745862d3a7149ee80f5eea41fb38d3`) |
 | Official plan | [`android-app/MASTER_PLAN.md`](../android-app/MASTER_PLAN.md) |
 | Detailed plan | [`docs/phase-3-plan.md`](phase-3-plan.md) |
 | Initial implementation commit | `3329d13` (`feat(android): implement phase 3 saved media gallery`). |
@@ -34,31 +35,33 @@ All Gradle invocations were run one at a time through
 
 | Command | Exit code | Notes |
 | --- | ---: | --- |
-| `:app:testDebugUnitTest -PtelegramDataSource=fake` | 0 | 131 tests passed, 0 failures/errors/skips; includes burst-safe saved-message update delivery, account-boundary queue draining, account-generation, range-prefix, LRU eviction, complete-file-size, independent-reader, cancellation, and late-update coverage. |
-| `:app:lintDebug` | 0 | Lint passed; warnings only. |
-| `:app:assembleDebug -PtelegramDataSource=fake` | 0 | Final fake APK produced; SHA-256 is recorded below. |
-| `:app:assembleDebug` (real default) | 0 | Real APK assembled; launch requires Telegram sign-in. |
-| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | 0 | 13 tests on `TelegramDrive_Small` API 36, 0 failures/errors/skips; includes Room 1→2 migration, account-scoped Paging rebinding, repository crash-resume/update, and shared-video release. |
+| `:app:testDebugUnitTest -PtelegramDataSource=fake` | 0 | ~14.0s; 132 tests, 0 failures/errors/skips. |
+| `:app:compileDebugAndroidTestKotlin -PtelegramDataSource=fake` | 0 | ~10.5s; new instrumented tests compile, but no device run was permitted. |
+| `:app:lintDebug` | 0 | ~9.0s; lint passed with existing warnings only. |
+| `:app:assembleDebug -PtelegramDataSource=fake` | 0 | ~10.1s; APK assembled and not deployed. |
+| `:app:assembleDebug` | 0 | ~4.3s; real APK assembled and not deployed. |
+| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | NOT RUN | Only the real-session emulator is available. |
 
 After the final Gradle gates, the workspace was checked for Gradle daemon/test-worker
 processes; a stale daemon was terminated and no test worker remained.
 
 ## Android CLI/device evidence
 
-Device: `TelegramDrive_Small` AVD, serial `emulator-5554`, API 36.
+Device inventory: `android emulator list` returned only `Pixel_9_Pro`; `adb devices -l`
+identified `emulator-5554`, reserved for the real Telegram session.
 
 - `android docs search "Room Paging Compose"` completed.
 - `android docs fetch "kb://android/topic/libraries/architecture/paging/v3-overview"` completed.
 - `android emulator list` and `adb devices` confirmed the emulator.
-- `android run --apks=<debug APK> --device=emulator-5554 --activity=com.nmtuong.telegramdrive.MainActivity` installed and launched the fake APK.
-- `android layout --pretty --output=docs/evidence/phase-3-final-layout.json` captured the current fake hierarchy.
-- `android screen capture --output=docs/evidence/phase-3-final-runtime.png --annotate` captured the current fake preflight.
+- `android run --apks=...` was intentionally not run; no APK replacement or install occurred.
+- Read-only package inspection found installed package `com.nmtuong.telegramdrive`, version `1.0`.
+- Force-stop/relaunch of the installed package returned to Saved Media without OTP; this is installed-runtime evidence only.
+- A temporary layout was captured under `/tmp` and was not added to repository evidence.
 - Current fake-device preflight hierarchy and screenshot are [`phase-3-final-layout.json`](evidence/phase-3-final-layout.json) and [`phase-3-final-runtime.png`](evidence/phase-3-final-runtime.png). The captured screen is sign-in because no fake session was seeded; authenticated gallery/video flows remain covered by connected tests and earlier fake gallery/video captures.
 - A later emulator session check also remained at Telegram sign-in: [`phase-3-current-session-layout.json`](evidence/phase-3-current-session-layout.json) and [`phase-3-current-session.png`](evidence/phase-3-current-session.png).
 - Resumed fake-device sign-in hierarchy and screenshot are [`phase-3-resumed-runtime-layout.json`](evidence/phase-3-resumed-runtime-layout.json) and [`phase-3-resumed-runtime.png`](evidence/phase-3-resumed-runtime.png); no Telegram credentials were entered.
-- Latest fake-device Media3 video preview is [`phase-3-current-video.png`](evidence/phase-3-current-video.png).
-- Real preflight launch reached Telegram sign-in; hierarchy and screenshot are
-  [`phase-3-real-final-preflight-layout.json`](evidence/phase-3-real-final-preflight-layout.json) and [`phase-3-real-final-preflight.png`](evidence/phase-3-real-final-preflight.png). No OTP/2FA or account data was entered.
+- Existing fake gallery/video captures remain fake/injected evidence only; no new fake-device capture was added.
+- No new real-account screenshot or log was committed for this goal; the installed-package relaunch is documented as installed-runtime evidence only.
 - Fake login layouts: `phase-3-fake-code-layout.json`, `phase-3-fake-password-layout.json`.
 - Earlier gallery capture: `phase-3-gallery-fake-clean.png` and matching layout JSON.
 - Image viewer: `phase-3-image-viewer-final.png` and matching layout JSON show the fake
@@ -113,11 +116,23 @@ No Phase 3 real-account evidence is claimed yet. Required pending captures/resul
 - network loss/recovery, player close cleanup, filesystem usage before/during/after;
 - logout/reset and account-isolation verification.
 
-Blocker: `USER_INTERACTION_REQUIRED` for an authorized Telegram account and any OTP/2FA
-entry. The scope is not silently downgraded to full-download playback.
+Blockers: `DEPLOYMENT_APPROVAL_REQUIRED — SESSION_PRESERVING_UPDATE` for validating
+the new APK; `USER_INTERACTION_REQUIRED — TEST_MESSAGE_MUTATION` for new/edit/delete;
+and `NOT_EXECUTED — USER_POLICY_SESSION_PRESERVATION` for real logout/reset. The
+scope is not silently downgraded to full-download playback.
+
+## Privacy audit
+
+- No new raw account evidence was added by this goal.
+- Historical Phase 2 layout/manifests and screenshots include account-specific source
+  names, filenames, and other private media; they are not sanitized evidence.
+- The historical artifacts were visually inspected and remain flagged for redaction
+  or replacement before any claim of privacy-clean evidence.
+- No credential, OTP, session payload, or new account filesystem path was captured.
 
 ## APK
 
 - Expected final path: `android-app/app/build/outputs/apk/debug/app-debug.apk`.
-- Final fake APK size: `70,146,979` bytes.
-- Final SHA-256: `b7ed93ea191e6f7ca38baece46d269f77e2f5d70f74da52cb5a9ab6ebe6f8673`.
+- Final real debug APK path: `android-app/app/build/outputs/apk/debug/app-debug.apk`.
+- Final real debug APK size: `70,069,252` bytes.
+- Final real debug APK SHA-256: `8bd793964165f342d28987398c8c02bd92991caf3602480d0eaa7abd311aa4af`.

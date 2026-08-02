@@ -105,6 +105,28 @@ class VideoStreamingCoordinatorTest {
   }
 
   @Test
+  fun returnsEofAtCompletedFileEndWithoutMovingCursorBackwards() = runTest {
+    val root = Files.createTempDirectory("tdlib-stream-eof-").toFile()
+    val content = byteArrayOf(1, 2, 3, 4)
+    val gateway = RangeGateway(root, content)
+    val coordinator = VideoStreamingCoordinator(
+      gateway = gateway,
+      fileId = 80,
+      stableFileIdentity = "remote-unique:video-77",
+      rangeSizeBytes = content.size.toLong(),
+      waitTimeoutMs = 500L,
+    )
+
+    coordinator.open(0L, -1L)
+    assertEquals(4, coordinator.readAt(ByteArray(4), 0, 4))
+    assertEquals(androidx.media3.common.C.RESULT_END_OF_INPUT, coordinator.readAt(ByteArray(4), 0, 4))
+    assertEquals(4L, coordinator.status.value.positionBytes)
+
+    coordinator.close()
+    root.deleteRecursively()
+  }
+
+  @Test
   fun seekSupersedesAWaitingRangeWithoutWaitingForTimeout() = runTest {
     val gateway = BlockingRangeGateway()
     val coordinator = VideoStreamingCoordinator(

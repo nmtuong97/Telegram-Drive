@@ -275,37 +275,17 @@ class SavedMediaRepository(
     chatId: Long,
     state: SyncStateEntity,
   ) {
-    val watermark = state.headWatermark ?: return
+    var lowerBound = state.lastSuccessfulCatchUpHead ?: state.headWatermark ?: return
     var cursor = state.backfillCursor ?: 0L
     var pass = 0
     while (pass < MAX_CATCH_UP_PASSES) {
-      while (true) {
-        ensureCurrentIdentity(identity)
-        val page = gateway.loadHistoryPage(chatId, cursor, PAGE_SIZE)
-        page.error?.let { throw IllegalStateException(it) }
-        val relevant = page.items.filter { it.id > watermark }
-        val nextCursor = page.rawLastMessageId
-        val checkpoint = state.copy(
-          phase = MediaSyncPhase.CATCHING_UP.name,
-          backfillCursor = nextCursor,
-          lastCheckpointAtEpochMillis = System.currentTimeMillis(),
-        )
-        database.withTransaction {
-          ensureCurrentIdentity(identity)
-          upsertPage(identity, relevant)
-          database.syncStateDao().upsert(checkpoint)
-        }
-        if (page.endOfHistory || nextCursor == null || nextCursor == cursor || nextCursor <= watermark) break
-        cursor = nextCursor
-      }
-
-      val latestHead = gateway.getSavedMessagesHead(chatId)
-      if (latestHead == null || latestHead <= watermark) {
+      val targetHead = gateway.getSavedMessagesHead(chatId)
+      if (targetHead == null || targetHead <= lowerBound) {
         database.syncStateDao().upsert(
           state.copy(
             phase = MediaSyncPhase.COMPLETED.name,
             backfillCursor = cursor,
-            lastSuccessfulCatchUpHead = latestHead ?: watermark,
+            lastSuccessfulCatchUpHead = lowerBound,
             lastSuccessfulCatchUpAtEpochMillis = System.currentTimeMillis(),
             lastCheckpointAtEpochMillis = System.currentTimeMillis(),
             lastError = null,
@@ -313,9 +293,55 @@ class SavedMediaRepository(
         )
         return
       }
-      // Keep the original watermark and repeat a bounded pass; do not create a new
-      // watermark that could hide the unprocessed catch-up interval.
+
+      while (true) {
+        ensureCurrentIdentity(identity)
+        val page = gateway.loadHistoryPage(chatId, cursor, PAGE_SIZE)
+        page.error?.let { throw IllegalStateException(it) }
+        val relevant = page.items.filter { it.id > lowerBound && it.id <= targetHead }
+        val nextCursor = page.rawLastMessageId
+        val checkpoint = state.copy(
+          phase = MediaSyncPhase.CATCHING_UP.name,
+          backfillCursor = nextCursor,
+          lastSuccessfulCatchUpHead = lowerBound,
+          lastCheckpointAtEpochMillis = System.currentTimeMillis(),
+        )
+        database.withTransaction {
+          ensureCurrentIdentity(identity)
+          upsertPage(identity, relevant)
+          database.syncStateDao().upsert(checkpoint)
+        }
+        if (page.endOfHistory || nextCursor == null || nextCursor == cursor || nextCursor <= lowerBound) break
+        cursor = nextCursor
+      }
+
+      val latestHead = gateway.getSavedMessagesHead(chatId)
+      if (latestHead == null || latestHead <= targetHead) {
+        database.syncStateDao().upsert(
+          state.copy(
+            phase = MediaSyncPhase.COMPLETED.name,
+            backfillCursor = cursor,
+            lastSuccessfulCatchUpHead = targetHead,
+            lastSuccessfulCatchUpAtEpochMillis = System.currentTimeMillis(),
+            lastCheckpointAtEpochMillis = System.currentTimeMillis(),
+            lastError = null,
+          ),
+        )
+        return
+      }
+      // The committed target becomes the lower bound for the next pass. Persist it
+      // before restarting so a crash cannot skip the interval already committed.
+      lowerBound = targetHead
       cursor = 0L
+      database.syncStateDao().upsert(
+        state.copy(
+          phase = MediaSyncPhase.CATCHING_UP.name,
+          backfillCursor = cursor,
+          lastSuccessfulCatchUpHead = lowerBound,
+          lastCheckpointAtEpochMillis = System.currentTimeMillis(),
+          lastError = null,
+        ),
+      )
       pass++
     }
     throw IllegalStateException("Saved Messages changed continuously during catch-up")

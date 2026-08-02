@@ -19,6 +19,7 @@ class TdLibVideoDataSource(
     { _, coordinator -> { coordinator.close() } },
 ) : BaseDataSource(false) {
   private var coordinator: VideoStreamingCoordinator? = null
+  private var reader: VideoStreamingCoordinator.ReaderHandle? = null
   private var release: (() -> Unit)? = null
   private var opened = false
   private var remainingBytes = C.LENGTH_UNSET.toLong()
@@ -27,17 +28,22 @@ class TdLibVideoDataSource(
 
   @Throws(IOException::class)
   override fun open(dataSpec: DataSpec): Long {
+    if (opened) close()
     val activeCoordinator = coordinatorFactory(dataSpec)
     coordinator = activeCoordinator
     release = releaseFactory(dataSpec, activeCoordinator)
     return try {
       uri = dataSpec.uri
       positionBytes = dataSpec.position
-      remainingBytes = activeCoordinator.openReader(dataSpec.position, dataSpec.length)
+      val activeReader = activeCoordinator.openReader(dataSpec.position, dataSpec.length)
+      reader = activeReader
+      remainingBytes = activeReader.length
       opened = true
       transferStarted(dataSpec)
       remainingBytes
     } catch (error: Exception) {
+      reader?.let(activeCoordinator::closeReader)
+      reader = null
       coordinator = null
       release?.invoke()
       release = null
@@ -51,7 +57,11 @@ class TdLibVideoDataSource(
     if (remainingBytes == 0L) return C.RESULT_END_OF_INPUT
     return try {
       val requested = if (remainingBytes == C.LENGTH_UNSET.toLong()) length else minOf(length.toLong(), remainingBytes).toInt()
-      val count = runBlocking { checkNotNull(coordinator).readAt(positionBytes, buffer, offset, requested) }
+      val activeCoordinator = checkNotNull(coordinator)
+      val activeReader = checkNotNull(reader)
+      val count = runBlocking { activeCoordinator.readAt(activeReader, positionBytes, buffer, offset, requested) }
+      if (count == C.RESULT_END_OF_INPUT) return C.RESULT_END_OF_INPUT
+      if (count <= 0) throw IOException("TDLib video range read returned invalid byte count: $count")
       positionBytes += count
       if (remainingBytes != C.LENGTH_UNSET.toLong()) remainingBytes -= count
       bytesTransferred(count)
@@ -70,6 +80,9 @@ class TdLibVideoDataSource(
     // The release callback owns the shared reference. Closing the coordinator
     // directly here would terminate another Media3 data source using the same
     // stable Telegram file identity.
+    val activeCoordinator = coordinator
+    reader?.let { activeCoordinator?.closeReader(it) }
+    reader = null
     coordinator = null
     release?.invoke()
     release = null

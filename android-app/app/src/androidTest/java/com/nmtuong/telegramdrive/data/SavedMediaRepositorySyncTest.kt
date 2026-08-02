@@ -125,7 +125,119 @@ class SavedMediaRepositorySyncTest {
     pagingJob.cancel()
     repository.close()
   }
+
+  @Test
+  fun catchUpCompletesWhenHeadGrowsDuringBackfill() = runBlocking {
+    val identityProvider = AccountSessionIdentityProvider().also { it.initializeFake(42L) }
+    val gateway = ScriptedSavedMediaGateway(
+      chatId = 900L,
+      messages = (0 until 150).map { index -> gatewayMedia(1_000L - index, 900L) },
+    )
+    gateway.onHeadRead = { read, scripted ->
+      if (read == 2) scripted.addMessage(scripted.media(1_100L))
+    }
+    val repository = SavedMediaRepository(database, gateway, identityProvider)
+    repository.start()
+
+    assertEquals(SavedMediaSyncResult.Completed, repository.syncSavedMessages())
+    val state = database.syncStateDao().find(42L, 1L, 900L)
+    assertEquals(MediaSyncPhase.COMPLETED.name, state?.phase)
+    assertEquals(1_100L, state?.lastSuccessfulCatchUpHead)
+    assertTrue(database.savedMediaDao().find(42L, 1L, 900L, 1_100L) != null)
+    repository.close()
+  }
+
+  @Test
+  fun catchUpCommitsEachHeadIntervalBeforeProcessingTheNext() = runBlocking {
+    val identityProvider = AccountSessionIdentityProvider().also { it.initializeFake(42L) }
+    val gateway = ScriptedSavedMediaGateway(
+      chatId = 900L,
+      messages = (0 until 150).map { index -> gatewayMedia(1_000L - index, 900L) },
+    )
+    gateway.onHeadRead = { read, scripted ->
+      when (read) {
+        2 -> scripted.addMessage(scripted.media(1_100L))
+        3 -> scripted.addMessage(scripted.media(1_200L))
+      }
+    }
+    val repository = SavedMediaRepository(database, gateway, identityProvider)
+    repository.start()
+
+    assertEquals(SavedMediaSyncResult.Completed, repository.syncSavedMessages())
+    val state = database.syncStateDao().find(42L, 1L, 900L)
+    assertEquals(1_200L, state?.lastSuccessfulCatchUpHead)
+    assertTrue(database.savedMediaDao().find(42L, 1L, 900L, 1_100L) != null)
+    assertTrue(database.savedMediaDao().find(42L, 1L, 900L, 1_200L) != null)
+    repository.close()
+  }
+
+  @Test
+  fun catchUpReturnsBoundedFailureWhenHeadNeverStabilizes() = runBlocking {
+    val identityProvider = AccountSessionIdentityProvider().also { it.initializeFake(42L) }
+    val gateway = ScriptedSavedMediaGateway(
+      chatId = 900L,
+      messages = (0 until 150).map { index -> gatewayMedia(1_000L - index, 900L) },
+    )
+    gateway.onHeadRead = { read, scripted ->
+      if (read >= 2) scripted.addMessage(scripted.media(1_000L + read))
+    }
+    val repository = SavedMediaRepository(database, gateway, identityProvider)
+    repository.start()
+
+    val result = repository.syncSavedMessages()
+    assertTrue(result is SavedMediaSyncResult.Failed)
+    assertTrue((result as SavedMediaSyncResult.Failed).message.contains("changed continuously"))
+    assertEquals(MediaSyncPhase.ERROR.name, database.syncStateDao().find(42L, 1L, 900L)?.phase)
+    repository.close()
+  }
+
+  @Test
+  fun crashBetweenCatchUpPassesResumesFromTheCommittedTargetHead() = runBlocking {
+    val identityProvider = AccountSessionIdentityProvider().also { it.initializeFake(42L) }
+    val gateway = ScriptedSavedMediaGateway(
+      chatId = 900L,
+      messages = (0 until 150).map { index -> gatewayMedia(1_000L - index, 900L) },
+    )
+    gateway.onHeadRead = { read, scripted ->
+      when (read) {
+        2 -> scripted.addMessage(scripted.media(1_100L))
+        3 -> scripted.addMessage(scripted.media(1_200L))
+      }
+    }
+    gateway.cancelOnHistoryCall = 4
+    val repository = SavedMediaRepository(database, gateway, identityProvider)
+    repository.start()
+
+    try {
+      repository.syncSavedMessages()
+      error("expected a simulated process interruption")
+    } catch (_: CancellationException) {
+      // The first interval was committed before the next pass was interrupted.
+    }
+    val interrupted = database.syncStateDao().find(42L, 1L, 900L)
+    assertEquals(MediaSyncPhase.CATCHING_UP.name, interrupted?.phase)
+    assertEquals(1_100L, interrupted?.lastSuccessfulCatchUpHead)
+
+    gateway.cancelOnHistoryCall = null
+    gateway.historyCursors.clear()
+    assertEquals(SavedMediaSyncResult.Completed, repository.syncSavedMessages())
+    assertEquals(0L, gateway.historyCursors.first())
+    assertEquals(1_200L, database.syncStateDao().find(42L, 1L, 900L)?.lastSuccessfulCatchUpHead)
+    assertTrue(database.savedMediaDao().find(42L, 1L, 900L, 1_200L) != null)
+    repository.close()
+  }
 }
+
+private fun gatewayMedia(id: Long, chatId: Long): MediaItem = MediaItem(
+  id = id,
+  sourceId = chatId,
+  name = "media-$id.jpg",
+  kind = if (id % 4 == 0L) MediaKind.VIDEO else MediaKind.IMAGE,
+  downloadState = DownloadState.NotDownloaded,
+  fileId = id.toInt(),
+  dateEpochSeconds = 1_700_000_000L - id,
+  stableFileIdentity = "remote-$id",
+)
 
 private class ScriptedSavedMediaGateway(
   private val chatId: Long,
@@ -135,12 +247,18 @@ private class ScriptedSavedMediaGateway(
   private val updates = MutableSharedFlow<SavedMessageUpdate>(extraBufferCapacity = 64)
   val historyCursors = CopyOnWriteArrayList<Long>()
   var cancelOnHistoryCall: Int? = null
+  var onHeadRead: ((Int, ScriptedSavedMediaGateway) -> Unit)? = null
   private var historyCalls = 0
+  private var headReads = 0
 
   override val savedMessageUpdates: Flow<SavedMessageUpdate> = updates
   override val fileUpdates: Flow<TdLibFileSnapshot> = emptyFlow()
   override suspend fun getSavedMessagesChatId(): Long = chatId
-  override suspend fun getSavedMessagesHead(chatId: Long): Long? = messages.maxOfOrNull(MediaItem::id)
+  override suspend fun getSavedMessagesHead(chatId: Long): Long? {
+    headReads++
+    onHeadRead?.invoke(headReads, this)
+    return messages.maxOfOrNull(MediaItem::id)
+  }
 
   override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage {
     historyCalls++
@@ -167,6 +285,10 @@ private class ScriptedSavedMediaGateway(
     dateEpochSeconds = 1_700_000_000L,
     stableFileIdentity = "remote-$id",
   )
+
+  fun addMessage(message: MediaItem) {
+    messages.addIfAbsent(message)
+  }
 
   fun emit(update: SavedMessageUpdate) {
     when (update) {
