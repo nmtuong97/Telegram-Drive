@@ -14,7 +14,9 @@ import kotlinx.coroutines.runBlocking
 @OptIn(UnstableApi::class)
 class TdLibVideoDataSource(
   private val coordinatorFactory: (DataSpec) -> VideoStreamingCoordinator,
-  private val releaseFactory: (DataSpec) -> (() -> Unit) = { {} },
+  /** Owns the coordinator reference acquired for this data source. */
+  private val releaseFactory: (DataSpec, VideoStreamingCoordinator) -> (() -> Unit) =
+    { _, coordinator -> { coordinator.close() } },
 ) : BaseDataSource(false) {
   private var coordinator: VideoStreamingCoordinator? = null
   private var release: (() -> Unit)? = null
@@ -26,12 +28,19 @@ class TdLibVideoDataSource(
   override fun open(dataSpec: DataSpec): Long {
     val activeCoordinator = coordinatorFactory(dataSpec)
     coordinator = activeCoordinator
-    release = releaseFactory(dataSpec)
-    uri = dataSpec.uri
-    remainingBytes = activeCoordinator.open(dataSpec.position, dataSpec.length)
-    opened = true
-    transferStarted(dataSpec)
-    return remainingBytes
+    release = releaseFactory(dataSpec, activeCoordinator)
+    return try {
+      uri = dataSpec.uri
+      remainingBytes = activeCoordinator.open(dataSpec.position, dataSpec.length)
+      opened = true
+      transferStarted(dataSpec)
+      remainingBytes
+    } catch (error: Exception) {
+      coordinator = null
+      release?.invoke()
+      release = null
+      throw error
+    }
   }
 
   @Throws(IOException::class)
@@ -55,7 +64,9 @@ class TdLibVideoDataSource(
   override fun close() {
     if (!opened) return
     opened = false
-    coordinator?.close()
+    // The release callback owns the shared reference. Closing the coordinator
+    // directly here would terminate another Media3 data source using the same
+    // stable Telegram file identity.
     coordinator = null
     release?.invoke()
     release = null
@@ -64,7 +75,8 @@ class TdLibVideoDataSource(
 
   class Factory(
     private val coordinatorFactory: (DataSpec) -> VideoStreamingCoordinator,
-    private val releaseFactory: (DataSpec) -> (() -> Unit) = { {} },
+    private val releaseFactory: (DataSpec, VideoStreamingCoordinator) -> (() -> Unit) =
+      { _, coordinator -> { coordinator.close() } },
   ) : DataSource.Factory {
     override fun createDataSource(): DataSource = TdLibVideoDataSource(coordinatorFactory, releaseFactory)
   }

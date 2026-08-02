@@ -83,7 +83,7 @@ class MediaAccessCoordinator(
       deduplicated(stableIdentity) {
         val currentSnapshot = gateway.getFileSnapshot(entity.telegramFileId)
         val currentPath = currentSnapshot
-          ?.takeIf { it.isDownloadingCompleted && it.isReadable }
+          ?.takeIf { isCompleteReadable(it, stableIdentity) }
           ?.localPath
           ?.let(::File)
           ?.takeIf { it.isFile && it.canRead() }
@@ -118,12 +118,17 @@ class MediaAccessCoordinator(
     val stableIdentity = entity.originalStableFileIdentity
     return try {
       val existing = gateway.getFileSnapshot(entity.telegramFileId)
-      val partial = existing?.takeIf { it.isReadable && it.localPath != null && it.downloadedPrefixSizeBytes >= INITIAL_VIDEO_BUFFER_BYTES }
+      val partial = existing?.takeIf {
+        isSnapshotForStableIdentity(it, stableIdentity) &&
+          it.isReadable &&
+          it.localPath != null &&
+          it.downloadedPrefixSizeBytes >= INITIAL_VIDEO_BUFFER_BYTES
+      }
         ?: run {
           val request = gateway.requestFileRange(entity.telegramFileId, 0L, INITIAL_VIDEO_BUFFER_BYTES, priority = 32)
           if (request != ActionResult.ACCEPTED) return MediaOpenResult.Failed("TDLib rejected the initial video buffer")
           gateway.getFileSnapshot(entity.telegramFileId)?.let { snapshot ->
-            if (snapshot.isReadable && snapshot.localPath != null &&
+            if (isSnapshotForStableIdentity(snapshot, stableIdentity) && snapshot.isReadable && snapshot.localPath != null &&
               (snapshot.isDownloadingCompleted || snapshot.downloadedPrefixSizeBytes >= INITIAL_VIDEO_BUFFER_BYTES)
             ) return@run snapshot
           }
@@ -131,6 +136,7 @@ class MediaAccessCoordinator(
             gateway.fileUpdates
               .filter { snapshot ->
                 snapshot.fileId == entity.telegramFileId &&
+                  isSnapshotForStableIdentity(snapshot, stableIdentity) &&
                   snapshot.isReadable &&
                   snapshot.localPath != null &&
                   (snapshot.isDownloadingCompleted || snapshot.downloadedPrefixSizeBytes >= INITIAL_VIDEO_BUFFER_BYTES)
@@ -160,7 +166,9 @@ class MediaAccessCoordinator(
         }.also { it.references++ }.coordinator
       }
     },
-    releaseFactory = { _: DataSpec -> { releaseVideoTransfer(entity.originalStableFileIdentity) } },
+    releaseFactory = { _: DataSpec, _: VideoStreamingCoordinator ->
+      { releaseVideoTransfer(entity.originalStableFileIdentity) }
+    },
   )
 
   private fun releaseVideoTransfer(stableIdentity: String) {
@@ -175,14 +183,11 @@ class MediaAccessCoordinator(
   private suspend fun clearVideoCache(entity: SavedMediaEntity) {
     val identity = identityProvider.currentIdentity.value ?: return
     database.withTransaction {
-      database.savedMediaDao().updateLocalState(
+      database.savedMediaDao().clearLocalPathForStableFile(
         identity.accountId,
         identity.databaseGeneration,
-        entity.chatId,
-        entity.messageId,
-        path = null,
-        available = true,
-        now = System.currentTimeMillis(),
+        entity.originalStableFileIdentity,
+        System.currentTimeMillis(),
       )
       database.cachedFileDao().find(identity.accountId, identity.databaseGeneration, entity.originalStableFileIdentity)?.let {
         database.cachedFileDao().upsert(it.copy(localPath = null, observedState = CachedFileState.NONE.name, fileType = CachedFileType.VIDEO_PARTIAL.name))
@@ -196,7 +201,7 @@ class MediaAccessCoordinator(
     type: CachedFileType,
   ): TdLibFileSnapshot? {
     gateway.getFileSnapshot(fileId)?.let { snapshot ->
-      if (snapshot.isDownloadingCompleted && snapshot.isReadable && snapshot.localPath != null) {
+      if (isCompleteReadable(snapshot, stableIdentity)) {
         persistSnapshot(snapshot, stableIdentity, type, CachedFileState.COMPLETE)
         return snapshot
       }
@@ -204,19 +209,28 @@ class MediaAccessCoordinator(
     val requestResult = gateway.requestFileRange(fileId, offsetBytes = 0L, limitBytes = 0L, priority = 24)
     if (requestResult != ActionResult.ACCEPTED) return null
     gateway.getFileSnapshot(fileId)?.let { snapshot ->
-      if (snapshot.isDownloadingCompleted && snapshot.isReadable && snapshot.localPath != null) {
+      if (isCompleteReadable(snapshot, stableIdentity)) {
         persistSnapshot(snapshot, stableIdentity, type, CachedFileState.COMPLETE)
         return snapshot
       }
     }
     val completed = withTimeout(FILE_WAIT_TIMEOUT_MS) {
       gateway.fileUpdates
-        .filter { it.fileId == fileId && it.isDownloadingCompleted && it.isReadable && it.localPath != null }
+        .filter { it.fileId == fileId && isCompleteReadable(it, stableIdentity) }
         .first()
     }
     persistSnapshot(completed, stableIdentity, type, CachedFileState.COMPLETE)
     return completed
   }
+
+  private fun isCompleteReadable(snapshot: TdLibFileSnapshot, stableIdentity: String): Boolean =
+    snapshot.isDownloadingCompleted &&
+      snapshot.isReadable &&
+      (snapshot.stableFileIdentity == null || snapshot.stableFileIdentity == stableIdentity) &&
+      snapshot.localPath?.let { File(it).isFile && File(it).canRead() } == true
+
+  private fun isSnapshotForStableIdentity(snapshot: TdLibFileSnapshot, stableIdentity: String): Boolean =
+    snapshot.stableFileIdentity == null || snapshot.stableFileIdentity == stableIdentity
 
   private suspend fun persistSnapshot(
     snapshot: TdLibFileSnapshot,

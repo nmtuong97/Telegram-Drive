@@ -19,6 +19,7 @@ import com.nmtuong.telegramdrive.domain.SavedMediaGateway
 import com.nmtuong.telegramdrive.domain.SavedMessageUpdate
 import java.io.Closeable
 import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -27,11 +28,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 enum class GalleryMediaFilter { ALL, IMAGE, VIDEO }
@@ -61,6 +65,10 @@ class SavedMediaRepository(
   private val scope = CoroutineScope(SupervisorJob() + dispatcher)
   private val activeChatId = AtomicReference<Long?>(null)
   private val updateJob = MutableStateFlow<Job?>(null)
+  private val syncMutex = Mutex()
+  private val accountMutationMutex = Mutex()
+  private val accountCancellationEpoch = AtomicLong(0L)
+  private val activeSyncJob = AtomicReference<Job?>(null)
   private var reconciliationJob: Job? = null
   private val _syncResult = MutableStateFlow<SavedMediaSyncResult?>(null)
   val syncResult: Flow<SavedMediaSyncResult?> = _syncResult.asStateFlow()
@@ -107,7 +115,24 @@ class SavedMediaRepository(
 
   suspend fun currentChatId(): Long? = gateway.getSavedMessagesChatId()
 
-  suspend fun syncSavedMessages(): SavedMediaSyncResult = withContext(dispatcher) {
+  suspend fun syncSavedMessages(): SavedMediaSyncResult = syncMutex.withLock {
+    val callerJob = currentCoroutineContext()[Job]
+    activeSyncJob.set(callerJob)
+    try {
+      syncSavedMessagesInternal()
+    } finally {
+      activeSyncJob.compareAndSet(callerJob, null)
+    }
+  }
+
+  /** Cancels the scanner before logout/reset so it cannot repopulate old-generation rows. */
+  fun cancelCurrentAccountWork() {
+    activeChatId.set(null)
+    accountCancellationEpoch.incrementAndGet()
+    activeSyncJob.get()?.cancel()
+  }
+
+  private suspend fun syncSavedMessagesInternal(): SavedMediaSyncResult = withContext(dispatcher) {
     val identity = identityProvider.currentIdentity.value
       ?: return@withContext SavedMediaSyncResult.Failed("Telegram account is not ready", retryable = false)
     val chatId = gateway.getSavedMessagesChatId()
@@ -156,9 +181,14 @@ class SavedMediaRepository(
         runBackfill(identity, chatId, backfillState, state.backfillCursor ?: 0L)
       }
 
+      val catchupCursor = if (state.phase == MediaSyncPhase.CATCHING_UP.name) {
+        state.backfillCursor ?: 0L
+      } else {
+        0L
+      }
       val catchupState = database.syncStateDao().find(identity.accountId, identity.databaseGeneration, chatId)
-        ?.copy(phase = MediaSyncPhase.CATCHING_UP.name, backfillCursor = 0L, lastError = null)
-        ?: backfillState.copy(phase = MediaSyncPhase.CATCHING_UP.name, backfillCursor = state.backfillCursor ?: 0L)
+        ?.copy(phase = MediaSyncPhase.CATCHING_UP.name, backfillCursor = catchupCursor, lastError = null)
+        ?: backfillState.copy(phase = MediaSyncPhase.CATCHING_UP.name, backfillCursor = catchupCursor)
       database.syncStateDao().upsert(catchupState)
       runCatchUp(identity, chatId, catchupState)
 
@@ -192,6 +222,7 @@ class SavedMediaRepository(
   ) {
     var cursor = initialCursor
     while (true) {
+      ensureCurrentIdentity(identity)
       val page = gateway.loadHistoryPage(chatId, cursor, PAGE_SIZE)
       page.error?.let { throw IllegalStateException(it) }
       val nextCursor = page.rawLastMessageId
@@ -201,6 +232,7 @@ class SavedMediaRepository(
         lastCheckpointAtEpochMillis = System.currentTimeMillis(),
       )
       database.withTransaction {
+        ensureCurrentIdentity(identity)
         upsertPage(identity, page.items)
         database.syncStateDao().upsert(checkpoint)
       }
@@ -219,6 +251,7 @@ class SavedMediaRepository(
     var pass = 0
     while (pass < MAX_CATCH_UP_PASSES) {
       while (true) {
+        ensureCurrentIdentity(identity)
         val page = gateway.loadHistoryPage(chatId, cursor, PAGE_SIZE)
         page.error?.let { throw IllegalStateException(it) }
         val relevant = page.items.filter { it.id > watermark }
@@ -229,6 +262,7 @@ class SavedMediaRepository(
           lastCheckpointAtEpochMillis = System.currentTimeMillis(),
         )
         database.withTransaction {
+          ensureCurrentIdentity(identity)
           upsertPage(identity, relevant)
           database.syncStateDao().upsert(checkpoint)
         }
@@ -278,65 +312,106 @@ class SavedMediaRepository(
         if (update.message != null && isIndexedMedia(update.message)) {
           upsertMedia(identity, update.message)
         } else {
-          database.savedMediaDao().markDeleted(
-            identity.accountId,
-            identity.databaseGeneration,
-            update.chatId,
-            update.messageId,
-            System.currentTimeMillis(),
-          )
+          markDeleted(identity, update.chatId, update.messageId)
         }
       }
-      is SavedMessageUpdate.Deleted -> database.savedMediaDao().markDeleted(
-        identity.accountId,
-        identity.databaseGeneration,
-        update.chatId,
-        update.messageId,
-        System.currentTimeMillis(),
-      )
+      is SavedMessageUpdate.Deleted -> markDeleted(identity, update.chatId, update.messageId)
     }
   }
 
   private suspend fun upsertMedia(identity: AccountSessionIdentity, item: MediaItem) {
-    val now = System.currentTimeMillis()
-    val previous = database.savedMediaDao().find(identity.accountId, identity.databaseGeneration, item.sourceId, item.id)
-    val entity = item.toEntity(identity, previous?.localFilePath)
-    database.withTransaction {
-      database.savedMediaDao().upsert(entity)
-      database.cachedFileDao().upsert(item.toCachedFile(identity, now))
-      item.thumbnailStableFileIdentity?.let { thumbnailIdentity ->
-        database.cachedFileDao().upsert(
-          CachedFileEntity(
-            accountId = identity.accountId,
-            databaseGeneration = identity.databaseGeneration,
-            stableFileIdentity = thumbnailIdentity,
-            tdlibFileId = item.thumbnailFileId ?: 0,
-            localPath = null,
-            fileType = CachedFileType.THUMBNAIL.name,
-            observedSizeBytes = 0L,
-            lastAccessedAtEpochMillis = now,
-            observedState = CachedFileState.NONE.name,
-          ),
+    accountMutationMutex.withLock {
+      ensureCurrentIdentity(identity)
+      val now = System.currentTimeMillis()
+      val previous = database.savedMediaDao().find(identity.accountId, identity.databaseGeneration, item.sourceId, item.id)
+      val previousPath = previous
+        ?.takeIf { it.originalStableFileIdentity == item.stableFileIdentity }
+        ?.localFilePath
+      database.withTransaction {
+        database.savedMediaDao().upsert(item.toEntity(identity, previousPath))
+        val existingOriginal = database.cachedFileDao().find(
+          identity.accountId,
+          identity.databaseGeneration,
+          item.stableFileIdentity,
         )
+        database.cachedFileDao().upsert(item.toCachedFile(identity, now, existingOriginal))
+        item.thumbnailStableFileIdentity?.let { thumbnailIdentity ->
+          val existingThumbnail = database.cachedFileDao().find(
+            identity.accountId,
+            identity.databaseGeneration,
+            thumbnailIdentity,
+          )
+          database.cachedFileDao().upsert(
+            (existingThumbnail ?: CachedFileEntity(
+              accountId = identity.accountId,
+              databaseGeneration = identity.databaseGeneration,
+              stableFileIdentity = thumbnailIdentity,
+              tdlibFileId = item.thumbnailFileId ?: 0,
+              localPath = null,
+              fileType = CachedFileType.THUMBNAIL.name,
+              observedSizeBytes = 0L,
+              lastAccessedAtEpochMillis = now,
+              observedState = CachedFileState.NONE.name,
+            )).copy(
+              tdlibFileId = item.thumbnailFileId ?: existingThumbnail?.tdlibFileId ?: 0,
+              fileType = CachedFileType.THUMBNAIL.name,
+              lastAccessedAtEpochMillis = now,
+            ),
+          )
+        }
+      }
+      if (previous != null && previous.originalStableFileIdentity != item.stableFileIdentity) {
+        cleanupOrphanCache(identity, previous.originalStableFileIdentity)
+      }
+      if (previous?.thumbnailStableFileIdentity != null && previous.thumbnailStableFileIdentity != item.thumbnailStableFileIdentity) {
+        cleanupOrphanCache(identity, previous.thumbnailStableFileIdentity)
       }
     }
   }
 
-  suspend fun clearAccount(identity: AccountSessionIdentity) {
-    activeChatId.set(null)
-    database.cachedFileDao().list(identity.accountId, identity.databaseGeneration).forEach { cached ->
-      if (cached.localPath != null) gateway.deleteTemporaryFile(cached.tdlibFileId)
+  private suspend fun markDeleted(identity: AccountSessionIdentity, chatId: Long, messageId: Long) {
+    accountMutationMutex.withLock {
+      ensureCurrentIdentity(identity)
+      val previous = database.savedMediaDao().find(identity.accountId, identity.databaseGeneration, chatId, messageId)
+      database.savedMediaDao().markDeleted(
+        identity.accountId,
+        identity.databaseGeneration,
+        chatId,
+        messageId,
+        System.currentTimeMillis(),
+      )
+      previous?.let { media ->
+        cleanupOrphanCache(identity, media.originalStableFileIdentity)
+        media.thumbnailStableFileIdentity?.let { cleanupOrphanCache(identity, it) }
+      }
     }
-    database.withTransaction {
-      database.savedMediaDao().deleteAccount(identity.accountId, identity.databaseGeneration)
-      database.cachedFileDao().deleteAccount(identity.accountId, identity.databaseGeneration)
-      database.syncStateDao().deleteAccount(identity.accountId, identity.databaseGeneration)
+  }
+
+  private suspend fun cleanupOrphanCache(identity: AccountSessionIdentity, stableIdentity: String) {
+    if (database.savedMediaDao().countActiveReferences(identity.accountId, identity.databaseGeneration, stableIdentity) != 0L) return
+    database.cachedFileDao().find(identity.accountId, identity.databaseGeneration, stableIdentity)?.let { cached ->
+      if (cached.localPath != null) gateway.deleteTemporaryFile(cached.tdlibFileId)
+      database.cachedFileDao().delete(identity.accountId, identity.databaseGeneration, stableIdentity)
+    }
+  }
+
+  suspend fun clearAccount(identity: AccountSessionIdentity) {
+    if (identityProvider.currentIdentity.value == identity) cancelCurrentAccountWork()
+    accountMutationMutex.withLock {
+      database.cachedFileDao().list(identity.accountId, identity.databaseGeneration).forEach { cached ->
+        if (cached.localPath != null) gateway.deleteTemporaryFile(cached.tdlibFileId)
+      }
+      database.withTransaction {
+        database.savedMediaDao().deleteAccount(identity.accountId, identity.databaseGeneration)
+        database.cachedFileDao().deleteAccount(identity.accountId, identity.databaseGeneration)
+        database.syncStateDao().deleteAccount(identity.accountId, identity.databaseGeneration)
+      }
     }
   }
 
   fun clearCurrentAccount() {
+    cancelCurrentAccountWork()
     val identity = identityProvider.currentIdentity.value ?: return
-    activeChatId.set(null)
     scope.launch { clearAccount(identity) }
   }
 
@@ -349,8 +424,9 @@ class SavedMediaRepository(
 
   /** Reconciles persisted hints against TDLib state and readable filesystem bytes. */
   private suspend fun reconcileAccount(identity: AccountSessionIdentity) {
+    val epoch = accountCancellationEpoch.get()
     database.cachedFileDao().list(identity.accountId, identity.databaseGeneration).forEach { cached ->
-      if (identityProvider.currentIdentity.value != identity) return
+      if (identityProvider.currentIdentity.value != identity || accountCancellationEpoch.get() != epoch) return
       val snapshot = gateway.getFileSnapshot(cached.tdlibFileId)
       val path = snapshot?.localPath ?: cached.localPath
       val file = path?.let(::File)
@@ -362,33 +438,39 @@ class SavedMediaRepository(
       } == true
       val readable = snapshot?.isReadable == true && stableIdentityMatches && completeSizeMatches && actualSize > 0L
       if (!readable) {
-        database.withTransaction {
+        accountMutationMutex.withLock {
+          if (identityProvider.currentIdentity.value != identity || accountCancellationEpoch.get() != epoch) return
+          database.withTransaction {
+            database.cachedFileDao().upsert(
+              cached.copy(
+                localPath = null,
+                observedSizeBytes = 0L,
+                observedState = CachedFileState.NONE.name,
+                lastAccessedAtEpochMillis = System.currentTimeMillis(),
+              ),
+            )
+            database.savedMediaDao().clearLocalPathForStableFile(
+              identity.accountId,
+              identity.databaseGeneration,
+              cached.stableFileIdentity,
+              System.currentTimeMillis(),
+            )
+          }
+        }
+      } else {
+        accountMutationMutex.withLock {
+          if (identityProvider.currentIdentity.value != identity || accountCancellationEpoch.get() != epoch) return
+          val state = if (snapshot.isDownloadingCompleted) CachedFileState.COMPLETE else CachedFileState.PARTIAL
           database.cachedFileDao().upsert(
             cached.copy(
-              localPath = null,
-              observedSizeBytes = 0L,
-              observedState = CachedFileState.NONE.name,
+              tdlibFileId = snapshot.fileId,
+              localPath = snapshot.localPath,
+              observedSizeBytes = actualSize,
+              observedState = state.name,
               lastAccessedAtEpochMillis = System.currentTimeMillis(),
             ),
           )
-          database.savedMediaDao().clearLocalPathForStableFile(
-            identity.accountId,
-            identity.databaseGeneration,
-            cached.stableFileIdentity,
-            System.currentTimeMillis(),
-          )
         }
-      } else {
-        val state = if (snapshot.isDownloadingCompleted) CachedFileState.COMPLETE else CachedFileState.PARTIAL
-        database.cachedFileDao().upsert(
-          cached.copy(
-            tdlibFileId = snapshot.fileId,
-            localPath = snapshot.localPath,
-            observedSizeBytes = actualSize,
-            observedState = state.name,
-            lastAccessedAtEpochMillis = System.currentTimeMillis(),
-          ),
-        )
       }
     }
   }
@@ -422,8 +504,13 @@ class SavedMediaRepository(
       lastReconciledAtEpochMillis = System.currentTimeMillis(),
     )
 
-  private fun MediaItem.toCachedFile(identity: AccountSessionIdentity, now: Long): CachedFileEntity =
-    CachedFileEntity(
+  private fun MediaItem.toCachedFile(
+    identity: AccountSessionIdentity,
+    now: Long,
+    existing: CachedFileEntity?,
+  ): CachedFileEntity {
+    val actualSize = localPath?.let(::File)?.takeIf { it.isFile && it.canRead() }?.length()
+    return (existing ?: CachedFileEntity(
       accountId = identity.accountId,
       databaseGeneration = identity.databaseGeneration,
       stableFileIdentity = stableFileIdentity,
@@ -434,7 +521,30 @@ class SavedMediaRepository(
       observedSizeBytes = sizeBytes,
       lastAccessedAtEpochMillis = now,
       observedState = if (localPath != null) CachedFileState.COMPLETE.name else CachedFileState.NONE.name,
+    )).copy(
+      tdlibFileId = fileId.takeIf { it != 0 } ?: existing?.tdlibFileId ?: 0,
+      localPath = localPath ?: existing?.localPath,
+      fileType = when {
+        existing?.localPath != null && localPath == null -> existing.fileType
+        kind == MediaKind.IMAGE -> CachedFileType.IMAGE_ORIGINAL.name
+        localPath != null -> CachedFileType.VIDEO_COMPLETE.name
+        else -> CachedFileType.VIDEO_PARTIAL.name
+      },
+      observedSizeBytes = actualSize ?: existing?.observedSizeBytes ?: sizeBytes,
+      lastAccessedAtEpochMillis = now,
+      observedState = when {
+        localPath != null -> CachedFileState.COMPLETE.name
+        existing?.localPath != null -> existing.observedState
+        else -> CachedFileState.NONE.name
+      },
     )
+  }
+
+  private fun ensureCurrentIdentity(identity: AccountSessionIdentity) {
+    if (identityProvider.currentIdentity.value != identity) {
+      throw CancellationException("Telegram account session changed")
+    }
+  }
 
   private companion object {
     const val PAGE_SIZE = 100

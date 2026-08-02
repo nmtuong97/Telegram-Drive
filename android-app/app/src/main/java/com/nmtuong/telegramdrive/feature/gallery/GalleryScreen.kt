@@ -83,7 +83,7 @@ fun GalleryScreen(
       Column(modifier = Modifier.weight(1f)) {
         Text("Saved Media", style = MaterialTheme.typography.headlineSmall)
         Text(
-          text = syncState?.phase?.lowercase()?.replace('_', ' ') ?: "waiting for sync",
+          text = syncStatusText(syncState),
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -112,7 +112,10 @@ fun GalleryScreen(
       Text("Preparing media…", style = MaterialTheme.typography.bodySmall)
     }
     if (openState is GalleryOpenState.Failed) {
-      Text((openState as GalleryOpenState.Failed).message, color = MaterialTheme.colorScheme.error)
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text((openState as GalleryOpenState.Failed).message, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+        TextButton(onClick = viewModel::retryOpen) { Text("Retry") }
+      }
     }
 
     when (val refresh = items.loadState.refresh) {
@@ -194,6 +197,22 @@ private fun EmptyPanel(syncState: com.nmtuong.telegramdrive.data.local.SyncState
     Text(if (syncState?.phase == MediaSyncPhase.ERROR.name) syncState.lastError ?: "Sync failed" else "No indexed media")
     Spacer(Modifier.height(8.dp))
     Button(onClick = onRetry) { Text("Retry sync") }
+  }
+}
+
+private fun syncStatusText(state: com.nmtuong.telegramdrive.data.local.SyncStateEntity?): String {
+  if (state == null) return "waiting for sync"
+  val phase = state.phase.lowercase().replace('_', ' ')
+  return when (state.phase) {
+    MediaSyncPhase.BACKFILLING.name ->
+      "$phase • checkpoint ${state.backfillCursor ?: "start"} / head ${state.headWatermark ?: "?"}"
+    MediaSyncPhase.CATCHING_UP.name ->
+      "$phase • through ${state.lastSuccessfulCatchUpHead ?: state.backfillCursor ?: "start"} / head ${state.headWatermark ?: "?"}"
+    MediaSyncPhase.COMPLETED.name ->
+      "$phase • through ${state.lastSuccessfulCatchUpHead ?: "latest"}"
+    MediaSyncPhase.ERROR.name ->
+      "$phase • ${state.lastError ?: "retry available"}"
+    else -> phase
   }
 }
 

@@ -133,6 +133,9 @@ class TdLibJsonGateway internal constructor(
     private val deletedTemporaryFileIds = ConcurrentHashMap.newKeySet<Int>()
     /** File IDs observed before logout/reset must not be resurrected by late updateFile events. */
     private val staleFileIds = ConcurrentHashMap.newKeySet<Int>()
+    /** After an account boundary, only an explicit request may re-enable a file ID. */
+    private val allowedFileIds = ConcurrentHashMap.newKeySet<Int>()
+    @Volatile private var fileObservationBlocked = false
     private val attemptSequenceMap = ConcurrentHashMap<Int, AtomicLong>()
     private var resolveIdentityJob: Job? = null
     private val requestSequence = AtomicLong(0)
@@ -963,8 +966,16 @@ class TdLibJsonGateway internal constructor(
 
     internal fun handleResponseForTest(raw: String) = handleResponse(raw)
 
+    internal fun cachedFileSnapshotForTest(fileId: Int): TdLibFileSnapshot? = fileSnapshots[fileId]
+
     override fun download(request: TransferRequest): ActionResult {
         val fileId = request.fileId
+        val activeIdentity = identityProvider?.currentIdentity?.value
+        if (activeIdentity != null && (
+                activeIdentity.accountId != request.identity.accountId ||
+                    activeIdentity.databaseGeneration != request.identity.databaseGeneration
+                )
+        ) return ActionResult.INVALID_STATE
         if (mutableResetProgress.value != ResetProgress.Idle) {
             mutableTransferUpdates.tryEmit(
                 TransferUpdate(
@@ -1024,6 +1035,9 @@ class TdLibJsonGateway internal constructor(
             pendingTransferContexts[fileId] = context
             pendingDownloads.add(fileId)
             pendingDownloadRequests[fileId] = extra
+            deletedTemporaryFileIds.remove(fileId)
+            staleFileIds.remove(fileId)
+            allowedFileIds.add(fileId)
             envelope
         }
 
@@ -1095,13 +1109,18 @@ class TdLibJsonGateway internal constructor(
         val fileId = file.int("id")
         if (fileId == 0) return
         if (deletedTemporaryFileIds.contains(fileId) || staleFileIds.contains(fileId)) return
+        if (fileObservationBlocked && !allowedFileIds.contains(fileId)) return
         val local = file.obj("local")
         val path = local?.string("path")?.takeIf { it.isNotBlank() }
         val expected = local?.long("expected_size")?.takeIf { it > 0L }
             ?: file.long("expected_size").takeIf { it > 0L }
             ?: file.long("size")
         val downloaded = local?.long("downloaded_size") ?: 0L
-        val prefix = local?.long("downloaded_prefix_size")?.takeIf { it > 0L } ?: downloaded
+        // A zero downloaded_prefix_size is meaningful: TDLib may have a
+        // downloaded range at a non-zero offset while byte zero is absent.
+        // Falling back to downloaded_size would make a seek range look like a
+        // contiguous prefix and could expose sparse/unavailable bytes to Media3.
+        val prefix = local?.long("downloaded_prefix_size") ?: 0L
         val offset = local?.long("download_offset") ?: 0L
         val complete = local?.bool("is_downloading_completed") == true
         val snapshot = TdLibFileSnapshot(
@@ -1123,6 +1142,8 @@ class TdLibJsonGateway internal constructor(
 
     private fun invalidateFileSnapshotState() {
         staleFileIds.addAll(fileSnapshots.keys)
+        allowedFileIds.clear()
+        fileObservationBlocked = true
         fileSnapshots.clear()
         deletedTemporaryFileIds.clear()
     }
@@ -1237,6 +1258,7 @@ class TdLibJsonGateway internal constructor(
 
     override suspend fun getFileSnapshot(fileId: Int): TdLibFileSnapshot? {
         if (deletedTemporaryFileIds.contains(fileId) || staleFileIds.contains(fileId)) return null
+        allowedFileIds.add(fileId)
         fileSnapshots[fileId]?.let { return it }
         val response = runCatching {
             execute(buildJsonObject {
@@ -1253,6 +1275,7 @@ class TdLibJsonGateway internal constructor(
         if (synchronized(lock) { lifecycle } != GatewayLifecycle.RUNNING) return ActionResult.INVALID_STATE
         deletedTemporaryFileIds.remove(fileId)
         staleFileIds.remove(fileId)
+        allowedFileIds.add(fileId)
         val request = requestEnvelope("range-$fileId", buildJsonObject {
             put("@type", "downloadFile")
             put("file_id", fileId)
@@ -1277,6 +1300,8 @@ class TdLibJsonGateway internal constructor(
     override fun deleteTemporaryFile(fileId: Int): ActionResult {
         if (synchronized(lock) { lifecycle } != GatewayLifecycle.RUNNING) return ActionResult.INVALID_STATE
         deletedTemporaryFileIds.add(fileId)
+        allowedFileIds.remove(fileId)
+        staleFileIds.add(fileId)
         fileSnapshots.remove(fileId)
         val request = requestEnvelope("delete-file-$fileId", buildJsonObject {
             put("@type", "deleteFile")

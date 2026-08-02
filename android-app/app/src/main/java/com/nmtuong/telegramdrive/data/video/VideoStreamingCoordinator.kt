@@ -152,6 +152,7 @@ class VideoStreamingCoordinator(
     startInclusive: Long,
     endExclusive: Long,
   ): Boolean {
+    if (snapshot.stableFileIdentity != null && snapshot.stableFileIdentity != stableFileIdentity) return false
     val path = snapshot.localPath?.let(::File) ?: return false
     if (!path.isFile || !path.canRead()) return false
     if (snapshot.isDownloadingCompleted) return true

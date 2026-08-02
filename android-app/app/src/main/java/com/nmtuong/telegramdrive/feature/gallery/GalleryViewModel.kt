@@ -39,6 +39,7 @@ class GalleryViewModel(
   val thumbnailPaths: StateFlow<Map<String, String>> = _thumbnailPaths.asStateFlow()
   private val _openState = MutableStateFlow<GalleryOpenState>(GalleryOpenState.Idle)
   val openState: StateFlow<GalleryOpenState> = _openState.asStateFlow()
+  private var lastOpenEntity: SavedMediaEntity? = null
 
   @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
   val pagingData: Flow<PagingData<SavedMediaEntity>> = _query
@@ -81,6 +82,7 @@ class GalleryViewModel(
   }
 
   fun openMedia(entity: SavedMediaEntity) {
+    lastOpenEntity = entity
     viewModelScope.launch {
       _openState.value = GalleryOpenState.Loading
       _openState.value = when (val result = mediaAccess.openOriginal(entity)) {
@@ -88,6 +90,10 @@ class GalleryViewModel(
         is MediaOpenResult.Failed -> GalleryOpenState.Failed(result.message)
       }
     }
+  }
+
+  fun retryOpen() {
+    lastOpenEntity?.let(::openMedia)
   }
 
   fun consumeOpenState() {

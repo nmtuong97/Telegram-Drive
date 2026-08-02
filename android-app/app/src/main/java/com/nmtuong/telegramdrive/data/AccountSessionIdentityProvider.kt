@@ -26,6 +26,7 @@ class AccountSessionIdentityProvider {
     private val lock = Any()
     private val _currentIdentity = MutableStateFlow<AccountSessionIdentity?>(null)
     val currentIdentity: StateFlow<AccountSessionIdentity?> = _currentIdentity.asStateFlow()
+    private var nextGeneration = 1L
 
     /**
      * Called after authorization Ready + getMe response.
@@ -33,7 +34,11 @@ class AccountSessionIdentityProvider {
      */
     fun updateAccount(accountId: Long) {
         synchronized(lock) {
-            val gen = _currentIdentity.value?.databaseGeneration ?: 1L
+            val current = _currentIdentity.value
+            // Account ID is already part of every Room/cache key. Preserve the
+            // active generation for the existing Phase 2 account-switch path;
+            // clear()/reset is what advances the generation boundary.
+            val gen = current?.databaseGeneration ?: nextGeneration
             _currentIdentity.value = AccountSessionIdentity(accountId, gen)
         }
     }
@@ -44,6 +49,7 @@ class AccountSessionIdentityProvider {
      */
     fun initializeFake(accountId: Long, generation: Long = 1L) {
         synchronized(lock) {
+            nextGeneration = generation.coerceAtLeast(1L)
             _currentIdentity.value = AccountSessionIdentity(accountId, generation)
         }
     }
@@ -55,13 +61,17 @@ class AccountSessionIdentityProvider {
     fun invalidateGeneration() {
         synchronized(lock) {
             val current = _currentIdentity.value ?: return
-            _currentIdentity.value = current.copy(databaseGeneration = current.databaseGeneration + 1L)
+            nextGeneration = maxOf(nextGeneration, current.databaseGeneration + 1L)
+            _currentIdentity.value = current.copy(databaseGeneration = nextGeneration)
         }
     }
 
     /** Called on logout or reset completion — identity becomes null until next login. */
     fun clear() {
         synchronized(lock) {
+            _currentIdentity.value?.let { current ->
+                nextGeneration = maxOf(nextGeneration, current.databaseGeneration + 1L)
+            }
             _currentIdentity.value = null
         }
     }

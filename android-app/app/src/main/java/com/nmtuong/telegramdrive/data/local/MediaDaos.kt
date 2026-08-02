@@ -60,6 +60,11 @@ interface SavedMediaDao {
     "UPDATE saved_media SET localFilePath = NULL, available = 1, lastReconciledAtEpochMillis = :now WHERE accountId = :accountId AND databaseGeneration = :databaseGeneration AND originalStableFileIdentity = :stableIdentity",
   )
   suspend fun clearLocalPathForStableFile(accountId: Long, databaseGeneration: Long, stableIdentity: String, now: Long)
+
+  @Query(
+    "SELECT COUNT(*) FROM saved_media WHERE accountId = :accountId AND databaseGeneration = :databaseGeneration AND deleted = 0 AND (originalStableFileIdentity = :stableIdentity OR thumbnailStableFileIdentity = :stableIdentity)",
+  )
+  suspend fun countActiveReferences(accountId: Long, databaseGeneration: Long, stableIdentity: String): Long
 }
 
 @Dao
@@ -78,6 +83,9 @@ interface CachedFileDao {
 
   @Query("DELETE FROM cached_file WHERE accountId = :accountId AND databaseGeneration = :databaseGeneration")
   suspend fun deleteAccount(accountId: Long, databaseGeneration: Long)
+
+  @Query("DELETE FROM cached_file WHERE accountId = :accountId AND databaseGeneration = :databaseGeneration AND stableFileIdentity = :identity")
+  suspend fun delete(accountId: Long, databaseGeneration: Long, identity: String)
 }
 
 @Dao
