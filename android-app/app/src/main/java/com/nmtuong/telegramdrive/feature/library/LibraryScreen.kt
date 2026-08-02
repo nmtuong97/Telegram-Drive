@@ -15,13 +15,17 @@ import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.nmtuong.telegramdrive.R
 import com.nmtuong.telegramdrive.domain.*
+import java.io.File
 
 @Composable
 fun LibraryScreen(viewModel: LibraryViewModel, onPreview: (PreviewTarget) -> Unit) {
     val lazyPagingItems = viewModel.pagingDataFlow.collectAsLazyPagingItems()
     val sources by viewModel.sources.collectAsStateWithLifecycle()
     val selectedSourceId by viewModel.selectedSourceId.collectAsStateWithLifecycle()
+    val sourceError by viewModel.sourceError.collectAsStateWithLifecycle()
     val transferStates by viewModel.transferStates.collectAsStateWithLifecycle()
+    val selectedSourceTitle = sources.firstOrNull { it.id == selectedSourceId }?.title
+        ?: stringResource(R.string.saved_messages)
 
     Column(
         modifier = Modifier
@@ -37,7 +41,7 @@ fun LibraryScreen(viewModel: LibraryViewModel, onPreview: (PreviewTarget) -> Uni
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = stringResource(R.string.saved_messages),
+                text = selectedSourceTitle,
                 style = MaterialTheme.typography.headlineSmall,
             )
             TextButton(onClick = viewModel::logout) {
@@ -64,6 +68,23 @@ fun LibraryScreen(viewModel: LibraryViewModel, onPreview: (PreviewTarget) -> Uni
                 }
             }
         }
+        if (sourceError != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = sourceError!!,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = viewModel::reloadSources) {
+                    Text(stringResource(R.string.retry))
+                }
+            }
+        }
 
         // Paging UI (Checkpoint 7)
         Box(modifier = Modifier.fillMaxSize()) {
@@ -80,7 +101,7 @@ fun LibraryScreen(viewModel: LibraryViewModel, onPreview: (PreviewTarget) -> Uni
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text(
-                            text = refreshState.error.message ?: "Failed to load history",
+                            text = refreshState.error.message?.takeIf { it.isNotBlank() } ?: "Failed to load history",
                             color = MaterialTheme.colorScheme.error,
                         )
                         Button(onClick = { lazyPagingItems.retry() }) {
@@ -107,7 +128,9 @@ fun LibraryScreen(viewModel: LibraryViewModel, onPreview: (PreviewTarget) -> Uni
                         ) {
                             items(
                                 count = lazyPagingItems.itemCount,
-                                key = { index -> lazyPagingItems[index]?.id ?: index.toLong() },
+                                key = { index ->
+                                    lazyPagingItems[index]?.let { "${it.sourceId}:${it.id}" } ?: "placeholder:$index"
+                                },
                             ) { index ->
                                 val item = lazyPagingItems[index]
                                 if (item != null) {
@@ -148,7 +171,7 @@ fun LibraryScreen(viewModel: LibraryViewModel, onPreview: (PreviewTarget) -> Uni
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
                                             Text(
-                                                text = appendState.error.message ?: "Failed to load more",
+                                                text = appendState.error.message?.takeIf { it.isNotBlank() } ?: "Failed to load more",
                                                 color = MaterialTheme.colorScheme.error,
                                                 style = MaterialTheme.typography.bodySmall,
                                             )
@@ -246,7 +269,9 @@ private fun MediaCard(
 private fun DownloadState.toTransferState(localPath: String?): TransferState = when (this) {
     DownloadState.NotDownloaded -> TransferState.NotStarted
     is DownloadState.Downloading -> TransferState.InProgress(percent)
-    DownloadState.Complete -> TransferState.Completed(localPath ?: "") 
+    DownloadState.Complete -> localPath?.takeIf { File(it).isFile }
+        ?.let(TransferState::Completed)
+        ?: TransferState.NotStarted
     DownloadState.Canceled -> TransferState.TransferCancelled
     is DownloadState.Failed -> TransferState.TransferFailed(reason)
     DownloadState.Unavailable -> TransferState.Unavailable

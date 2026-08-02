@@ -39,6 +39,41 @@ private const val MAX_PARAMETER_ATTEMPTS = 2
  * Prevents infinite scan when all history is text-only content.
  */
 private const val EMPTY_PAGE_SCAN_LIMIT = 10
+private const val SOURCE_CHAT_LIMIT = 50
+private val ELIGIBLE_SOURCE_CHAT_TYPES = setOf(
+    "chatTypePrivate",
+    "chatTypeBasicGroup",
+    "chatTypeSupergroup",
+)
+private val TEXT_EXTENSIONS = setOf("txt", "md", "csv", "json", "xml", "log")
+
+private fun mimeTypeForName(name: String): String? = when (name.substringAfterLast('.', "").lowercase()) {
+    "txt", "md", "csv", "json", "xml", "log" -> "text/plain"
+    "pdf" -> "application/pdf"
+    "zip" -> "application/zip"
+    "mp3" -> "audio/mpeg"
+    "ogg" -> "audio/ogg"
+    "wav" -> "audio/wav"
+    "gif" -> "image/gif"
+    "mp4" -> "video/mp4"
+    else -> null
+}
+
+private fun isNetworkFailure(message: String): Boolean {
+    val upper = message.uppercase()
+    return upper.contains("NETWORK") ||
+        upper.contains("TIMEOUT") ||
+        upper.contains("CONNECTION") ||
+        upper.contains("OFFLINE") ||
+        upper.contains("UNAVAILABLE") ||
+        upper.contains("HOST")
+}
+
+private fun safeNetworkMessage(message: String): String {
+    if (isNetworkFailure(message)) return "Network unavailable. Check your connection and retry."
+    return SensitiveDataRedactor.redact(message).takeIf { it.isNotBlank() }
+        ?: "Telegram request failed"
+}
 
 private data class PendingTransferContext(
     val operationId: TransferOperationId,
@@ -797,10 +832,17 @@ class TdLibJsonGateway internal constructor(
                 put("only_local", false)
             }
 
-            val response = execute(request)
+            val response = try {
+                execute(request)
+            } catch (error: TdLibErrorException) {
+                val message = error.message.orEmpty()
+                return HistoryPage.error(safeNetworkMessage(message), isNetworkFailure(message))
+            }
             if (response.string("@type") == "error") {
+                val message = response.string("message") ?: "Unknown error"
                 return HistoryPage.error(
-                    SensitiveDataRedactor.redact(response.string("message") ?: "Unknown error")
+                    safeNetworkMessage(message),
+                    isNetworkFailure(message),
                 )
             }
 
@@ -1050,10 +1092,18 @@ class TdLibJsonGateway internal constructor(
     override fun preview(itemId: Long): PreviewTarget? {
         val item = (mutableLibrary.value as? LibraryState.Content)?.items?.firstOrNull { it.id == itemId } ?: return null
         val path = item.localPath?.takeIf { File(it).isFile } ?: return null
+        val mimeType = item.mimeType?.takeIf { it.isNotBlank() } ?: mimeTypeForName(path)
         return when (item.kind) {
             MediaKind.IMAGE -> PreviewTarget.Image(item.id, path)
             MediaKind.VIDEO -> PreviewTarget.Video(item.id, path)
-            else -> null
+            MediaKind.ANIMATION -> PreviewTarget.Animation(item.id, path, mimeType)
+            MediaKind.AUDIO -> PreviewTarget.Audio(item.id, path, mimeType)
+            MediaKind.PDF -> PreviewTarget.Pdf(item.id, path)
+            MediaKind.DOCUMENT -> if (mimeType?.startsWith("text/") == true || path.substringAfterLast('.', "").lowercase() in TEXT_EXTENSIONS) {
+                PreviewTarget.Text(item.id, path, mimeType)
+            } else {
+                PreviewTarget.External(item.id, path, mimeType)
+            }
         }
     }
 
@@ -1076,10 +1126,53 @@ class TdLibJsonGateway internal constructor(
     }
 
     override suspend fun getAvailableSources(): List<FileSource> {
-        val savedChatId = getSavedMessagesChatId() ?: return emptyList()
-        return listOf(
-            FileSource(id = savedChatId, title = "Saved Messages", savedMessages = true)
-        )
+        val meResponse = runCatching { execute(buildJsonObject { put("@type", "getMe") }) }.getOrElse {
+            throw IllegalStateException(safeNetworkMessage(it.message.orEmpty()))
+        }
+        if (meResponse.string("@type") == "error") {
+            throw IllegalStateException(safeNetworkMessage(meResponse.string("message").orEmpty()))
+        }
+        val selfUserId = meResponse.long("id")
+        if (selfUserId == 0L) throw IllegalStateException("Telegram account is not available")
+
+        val selfChat = runCatching {
+            execute(buildJsonObject {
+                put("@type", "createPrivateChat")
+                put("user_id", selfUserId)
+                put("force", true)
+            })
+        }.getOrNull()
+        val savedChatId = selfChat?.long("id")?.takeIf { it != 0L }
+            ?: throw IllegalStateException("Saved Messages is not available")
+        val sources = linkedMapOf(savedChatId to FileSource(savedChatId, "Saved Messages", true))
+
+        val chatsResponse = runCatching {
+            execute(buildJsonObject {
+                put("@type", "getChats")
+                put("chat_list", buildJsonObject { put("@type", "chatListMain") })
+                put("limit", SOURCE_CHAT_LIMIT)
+            })
+        }.getOrNull()
+        val chatIds = chatsResponse?.get("chat_ids")?.jsonArray.orEmpty()
+            .mapNotNull { it.jsonPrimitive.longOrNull }
+            .filter { it != savedChatId }
+            .distinct()
+
+        for (chatId in chatIds) {
+            val chat = runCatching {
+                execute(buildJsonObject {
+                    put("@type", "getChat")
+                    put("chat_id", chatId)
+                })
+            }.getOrNull() ?: continue
+            if (chat.string("@type") == "error") continue
+            val type = chat.obj("type") ?: continue
+            val typeName = type.string("@type") ?: continue
+            if (typeName !in ELIGIBLE_SOURCE_CHAT_TYPES) continue
+            val title = chat.string("title")?.takeIf { it.isNotBlank() } ?: "Telegram chat"
+            sources.putIfAbsent(chatId, FileSource(chatId, title, savedMessages = false))
+        }
+        return sources.values.toList()
     }
 
     private fun updateItem(fileId: Int, transform: (MediaItem) -> MediaItem) {
@@ -1143,9 +1236,7 @@ class TdLibJsonGateway internal constructor(
             }
             (request == "getMe" || request == "chat" || request == "history") && synchronized(lock) { pendingLibraryRequest == extra } -> {
                 synchronized(lock) { pendingLibraryRequest = null }
-                mutableLibrary.value = LibraryState.Error(
-                    SensitiveDataRedactor.redact(rawMessage ?: "Telegram request failed")
-                )
+                mutableLibrary.value = LibraryState.Error(safeNetworkMessage(rawMessage ?: "Telegram request failed"))
             }
             request == "parameters" && synchronized(lock) { pendingParametersRequest == extra } -> {
                 val retry = synchronized(lock) {

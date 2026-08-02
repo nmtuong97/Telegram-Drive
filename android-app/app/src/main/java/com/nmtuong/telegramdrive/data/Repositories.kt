@@ -20,6 +20,38 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+private fun previewTargetFor(itemId: Long, mediaKind: MediaKind, localPath: String, mimeType: String?): PreviewTarget? {
+    val file = File(localPath)
+    if (!file.isFile) return null
+    val resolvedMime = mimeType?.takeIf { it.isNotBlank() } ?: mimeTypeForName(file.name)
+    return when (mediaKind) {
+        MediaKind.IMAGE -> PreviewTarget.Image(itemId, localPath)
+        MediaKind.VIDEO -> PreviewTarget.Video(itemId, localPath)
+        MediaKind.ANIMATION -> PreviewTarget.Animation(itemId, localPath, resolvedMime)
+        MediaKind.AUDIO -> PreviewTarget.Audio(itemId, localPath, resolvedMime)
+        MediaKind.PDF -> PreviewTarget.Pdf(itemId, localPath)
+        MediaKind.DOCUMENT -> if (resolvedMime?.startsWith("text/") == true || file.name.substringAfterLast('.', "").lowercase() in TEXT_EXTENSIONS) {
+            PreviewTarget.Text(itemId, localPath, resolvedMime)
+        } else {
+            PreviewTarget.External(itemId, localPath, resolvedMime)
+        }
+    }
+}
+
+private fun mimeTypeForName(name: String): String? = when (name.substringAfterLast('.', "").lowercase()) {
+    "txt", "md", "csv", "json", "xml", "log" -> "text/plain"
+    "zip" -> "application/zip"
+    "pdf" -> "application/pdf"
+    "mp3" -> "audio/mpeg"
+    "ogg" -> "audio/ogg"
+    "wav" -> "audio/wav"
+    "gif" -> "image/gif"
+    "mp4" -> "video/mp4"
+    else -> null
+}
+
+private val TEXT_EXTENSIONS = setOf("txt", "md", "csv", "json", "xml", "log")
+
 class RealTelegramRepository(private val gateway: TdLibGateway) : TelegramRepository {
     override val diagnostics = gateway.state
     override val authorization = gateway.authorization
@@ -40,13 +72,7 @@ class RealTelegramRepository(private val gateway: TdLibGateway) : TelegramReposi
         mediaKind: MediaKind,
         localPath: String,
     ): PreviewTarget? {
-        val file = File(localPath)
-        if (!file.isFile) return null
-        return when (mediaKind) {
-            MediaKind.IMAGE -> PreviewTarget.Image(itemId, localPath)
-            MediaKind.VIDEO -> PreviewTarget.Video(itemId, localPath)
-            else -> null
-        }
+        return previewTargetFor(itemId, mediaKind, localPath, null)
     }
     override fun preview(itemId: Long) = gateway.preview(itemId)
     override suspend fun getSavedMessagesChatId(): Long? = gateway.getSavedMessagesChatId()
@@ -157,7 +183,7 @@ class FakeTelegramRepository(
 
     override fun loadSavedMessages(limit: Int): ActionResult {
         if (authorization.value.state != AuthorizationState.Ready) return ActionResult.INVALID_STATE
-        val supportedKinds = setOf(MediaKind.IMAGE, MediaKind.VIDEO, MediaKind.ANIMATION, MediaKind.DOCUMENT)
+        val supportedKinds = MediaKind.entries.toSet()
         val items = catalog.media.filter {
             it.sourceId == catalog.sources.first { source -> source.savedMessages }.id && it.kind in supportedKinds
         }
@@ -205,21 +231,19 @@ class FakeTelegramRepository(
                 mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.InProgress(50)))
                 delay(downloadStepDelayMillis)
                 if (!isCurrentDownload(fileId, generation)) return@launch
-                if (item.kind == MediaKind.ANIMATION) {
-                    updateItem(fileId) { it.copy(downloadState = DownloadState.Failed("Simulated download failure"), localPath = null) }
-                    mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.TransferFailed("Simulated download failure")))
-                } else {
-                    filesDirectory.mkdirs()
-                    val target = File(filesDirectory, item.name)
-                    when (item.kind) {
-                        MediaKind.IMAGE -> target.writeBytes(FAKE_PNG)
-                        MediaKind.VIDEO -> target.writeBytes(videoBytes())
-                        else -> target.writeBytes(ByteArray(0))
-                    }
-                    if (isCurrentDownload(fileId, generation)) {
-                        updateItem(fileId) { it.copy(downloadState = DownloadState.Complete, localPath = target.absolutePath) }
-                        mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.Completed(target.absolutePath), 100, target.absolutePath))
-                    }
+                filesDirectory.mkdirs()
+                val target = File(filesDirectory, item.name)
+                when (item.kind) {
+                    MediaKind.IMAGE -> target.writeBytes(FAKE_PNG)
+                    MediaKind.VIDEO -> target.writeBytes(videoBytes())
+                    MediaKind.ANIMATION -> target.writeBytes(FAKE_GIF)
+                    MediaKind.AUDIO -> target.writeBytes(FAKE_WAV)
+                    MediaKind.PDF -> target.writeBytes(FAKE_PDF)
+                    MediaKind.DOCUMENT -> target.writeText("Telegram Drive fake text preview\n", Charsets.UTF_8)
+                }
+                if (isCurrentDownload(fileId, generation)) {
+                    updateItem(fileId) { it.copy(downloadState = DownloadState.Complete, localPath = target.absolutePath) }
+                    mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.Completed(target.absolutePath), 100, target.absolutePath))
                 }
             } catch (e: CancellationException) {
                 mutableTransferUpdates.tryEmit(TransferUpdate(identity, TransferState.TransferCancelled))
@@ -261,23 +285,13 @@ class FakeTelegramRepository(
         mediaKind: MediaKind,
         localPath: String,
     ): PreviewTarget? {
-        val file = File(localPath)
-        if (!file.isFile) return null
-        return when (mediaKind) {
-            MediaKind.IMAGE -> PreviewTarget.Image(itemId, localPath)
-            MediaKind.VIDEO -> PreviewTarget.Video(itemId, localPath)
-            else -> null
-        }
+        return previewTargetFor(itemId, mediaKind, localPath, null)
     }
 
     override fun preview(itemId: Long): PreviewTarget? {
         val item = (library.value as? LibraryState.Content)?.items?.firstOrNull { it.id == itemId } ?: return null
         val path = item.localPath?.takeIf { File(it).isFile } ?: return null
-        return when (item.kind) {
-            MediaKind.IMAGE -> PreviewTarget.Image(item.id, path)
-            MediaKind.VIDEO -> PreviewTarget.Video(item.id, path)
-            else -> null
-        }
+        return previewTargetFor(item.id, item.kind, path, item.mimeType)
     }
 
     override suspend fun getSavedMessagesChatId(): Long? {
@@ -316,7 +330,7 @@ class FakeTelegramRepository(
             val endOfHistory = (startIndex + rawPage.size) >= allSorted.size
             val rawLastMessageId = rawPage.lastOrNull()?.id
 
-            val supportedKinds = setOf(MediaKind.IMAGE, MediaKind.VIDEO, MediaKind.ANIMATION, MediaKind.DOCUMENT)
+            val supportedKinds = MediaKind.entries.toSet()
             val mappedItems = rawPage.mapNotNull { rawMsg ->
                 rawMsg.mediaItem?.takeIf { it.kind in supportedKinds }?.copy(downloadState = DownloadState.NotDownloaded, localPath = null)
             }
@@ -376,5 +390,63 @@ class FakeTelegramRepository(
         val FAKE_PNG: ByteArray = Base64.getDecoder().decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
         )
+        val FAKE_GIF: ByteArray = Base64.getDecoder().decode(
+            "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==",
+        )
+        val FAKE_WAV: ByteArray = ByteArray(44 + 8_000 * 2).apply {
+            putAscii(0, "RIFF")
+            putLeInt(4, size - 8)
+            putAscii(8, "WAVEfmt ")
+            putLeInt(16, 16)
+            putLeShort(20, 1)
+            putLeShort(22, 1)
+            putLeInt(24, 8_000)
+            putLeInt(28, 16_000)
+            putLeShort(32, 2)
+            putLeShort(34, 16)
+            putAscii(36, "data")
+            putLeInt(40, size - 44)
+        }
+        val FAKE_PDF: ByteArray = buildFakePdf()
+
+        private fun buildFakePdf(): ByteArray {
+            val objects = listOf(
+                "<< /Type /Catalog /Pages 2 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 320 180] /Contents 4 0 R /Resources << >> >>",
+                "<< /Length 0 >>\nstream\n\nendstream",
+            )
+            val pdf = StringBuilder("%PDF-1.4\n")
+            val offsets = objects.mapIndexed { index, body ->
+                val offset = pdf.length
+                pdf.append("${index + 1} 0 obj\n$body\nendobj\n")
+                offset
+            }
+            val xrefOffset = pdf.length
+            pdf.append("xref\n0 ${objects.size + 1}\n")
+            pdf.append("0000000000 65535 f \n")
+            offsets.forEach { offset ->
+                pdf.append(offset.toString().padStart(10, '0')).append(" 00000 n \n")
+            }
+            pdf.append("trailer\n<< /Size ${objects.size + 1} /Root 1 0 R >>\n")
+            pdf.append("startxref\n$xrefOffset\n%%EOF\n")
+            return pdf.toString().toByteArray(Charsets.US_ASCII)
+        }
+
+        private fun ByteArray.putAscii(offset: Int, value: String) {
+            value.toByteArray(Charsets.US_ASCII).copyInto(this, offset)
+        }
+
+        private fun ByteArray.putLeInt(offset: Int, value: Int) {
+            this[offset] = value.toByte()
+            this[offset + 1] = (value ushr 8).toByte()
+            this[offset + 2] = (value ushr 16).toByte()
+            this[offset + 3] = (value ushr 24).toByte()
+        }
+
+        private fun ByteArray.putLeShort(offset: Int, value: Int) {
+            this[offset] = value.toByte()
+            this[offset + 1] = (value ushr 8).toByte()
+        }
     }
 }

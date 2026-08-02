@@ -77,6 +77,8 @@ class TransferCoordinator(
                 if (isValidIdentity(update.identity)) {
                     val currentAttempt = synchronized(lock) { attemptMap[update.identity.fileId] ?: 0L }
                     if (update.attemptId != 0L && update.attemptId != currentAttempt) return@collect
+                    val currentSnapshot = _snapshots.value[update.identity]
+                    if (currentSnapshot?.attemptId == currentAttempt && currentSnapshot.isTerminal) return@collect
                     val newSnapshot = TransferSnapshot(
                         identity = update.identity,
                         state = update.state,
@@ -122,6 +124,23 @@ class TransferCoordinator(
         val fileId = request.fileId
         if (closed || !isValidIdentity(identity) || !isCurrentGeneration()) {
             return false // Closed, stale identity, or invalidated generation
+        }
+
+        val existingPath = request.knownLocalPath?.takeIf { isValidLocalFile(it, request.expectedSizeBytes) }
+        if (existingPath != null) {
+            synchronized(lock) {
+                val attemptId = attemptMap[fileId] ?: 0L
+                updateSnapshot(
+                    TransferSnapshot(
+                        identity = identity,
+                        state = TransferState.Completed(existingPath),
+                        progress = 100,
+                        localPath = existingPath,
+                        attemptId = attemptId,
+                    )
+                )
+            }
+            return true
         }
 
         synchronized(lock) {
@@ -265,4 +284,9 @@ class TransferCoordinator(
 
     private fun isValidIdentity(identity: TransferIdentity): Boolean =
         identity.accountId == accountId && identity.databaseGeneration == databaseGeneration
+
+    private fun isValidLocalFile(path: String, expectedSizeBytes: Long): Boolean {
+        val file = java.io.File(path)
+        return file.isFile && (expectedSizeBytes <= 0L || file.length() >= expectedSizeBytes)
+    }
 }

@@ -46,4 +46,11 @@
     <string name="download_canceled">Đã hủy tải xuống</string>
     <string name="retry">Thử lại</string>
     <string name="source_selector">Nguồn dữ liệu</string>
+    <string name="pdf_preview">Xem PDF</string>
+    <string name="previous_page">Trang trước</string>
+    <string name="next_page">Trang sau</string>
+    <string name="page_of">Trang %1$d trên %2$d</string>
+    <string name="open_file">Mở bằng ứng dụng khác</string>
+    <string name="external_open_description">File này không hỗ trợ xem trong ứng dụng. File sẽ được chia sẻ bằng URI tạm thời chỉ đọc.</string>
+    <string name="no_compatible_app">Không có ứng dụng phù hợp để mở file này.</string>
 </resources>

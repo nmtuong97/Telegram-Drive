@@ -2,12 +2,19 @@ package com.nmtuong.telegramdrive.feature.preview
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.nmtuong.telegramdrive.R
@@ -31,7 +38,35 @@ fun ImagePreviewScreen(path: String, onBack: () -> Unit) {
       !File(path).isFile || loadFinished && bitmap == null ->
         Text(stringResource(R.string.media_error), modifier = Modifier.padding(16.dp))
       !loadFinished -> CircularProgressIndicator(modifier = Modifier.padding(16.dp))
-      else -> Image(bitmap!!.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+      else -> {
+        var scale by remember(path) { mutableFloatStateOf(1f) }
+        var offset by remember(path) { mutableStateOf(Offset.Zero) }
+        val transformState = rememberTransformableState { zoomChange, panChange, _ ->
+          scale = (scale * zoomChange).coerceIn(1f, 8f)
+          offset += panChange
+        }
+        Image(
+          bitmap!!.asImageBitmap(),
+          contentDescription = stringResource(R.string.image_preview),
+          contentScale = ContentScale.Fit,
+          modifier = Modifier
+            .fillMaxSize()
+            .clip(MaterialTheme.shapes.medium)
+            .graphicsLayer {
+              scaleX = scale
+              scaleY = scale
+              translationX = offset.x
+              translationY = offset.y
+            }
+            .pointerInput(path) {
+              detectTapGestures(onDoubleTap = {
+                scale = 1f
+                offset = Offset.Zero
+              })
+            }
+            .transformable(transformState),
+        )
+      }
     }
   }
 }

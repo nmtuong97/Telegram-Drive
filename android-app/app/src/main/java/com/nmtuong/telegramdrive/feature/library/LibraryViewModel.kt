@@ -10,6 +10,8 @@ import com.nmtuong.telegramdrive.data.AccountSessionIdentityProvider
 import com.nmtuong.telegramdrive.data.TelegramRepository
 import com.nmtuong.telegramdrive.domain.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -22,6 +24,7 @@ import kotlinx.coroutines.launch
 class LibraryViewModel(
     private val repository: TelegramRepository,
     private val identityProvider: AccountSessionIdentityProvider? = null,
+    private val transferDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
     private val _transferStates = MutableStateFlow<Map<Int, TransferState>>(emptyMap())
@@ -76,6 +79,7 @@ class LibraryViewModel(
             repository = repository,
             accountId = identity.accountId,
             databaseGeneration = identity.databaseGeneration,
+            dispatcher = transferDispatcher,
             activeGenerationProvider = { identityProvider?.databaseGeneration ?: identity.databaseGeneration },
         )
         activeCoordinator = newCoordinator

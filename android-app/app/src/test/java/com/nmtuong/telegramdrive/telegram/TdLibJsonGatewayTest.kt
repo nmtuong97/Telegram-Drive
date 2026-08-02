@@ -29,6 +29,7 @@ class TdLibJsonGatewayTest {
         assertEquals(true, native.requests.first().contains("new_verbosity_level\":0"))
         assertEquals(1, TdLibJsonGateway.activeClientCountForTest())
         gateway.close()
+        gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
         runCurrent()
     }
 
@@ -149,8 +150,8 @@ class TdLibJsonGatewayTest {
         assertEquals(DownloadState.Canceled, canceled.downloadState)
         gateway.handleResponseForTest("""{"@type":"ok","@extra":"$cancelExtra"}""")
         assertEquals(ActionResult.ACCEPTED, gateway.download(99))
-        gateway.close()
-        runCurrent()
+        gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
+        assertEquals(GatewayLifecycle.CLOSED, gateway.state.value.lifecycle)
     }
 
     @Test fun authSubmitIsStateGatedDeduplicatedAndErrorIsRedacted() = runTest {
@@ -179,8 +180,7 @@ class TdLibJsonGatewayTest {
         assertFalse(gateway.authorization.value.actionPending)
         assertFalse(gateway.authorization.value.safeError.orEmpty().contains("000000000"))
         assertFalse(gateway.authorization.value.safeError.orEmpty().contains("value-c"))
-        gateway.close()
-        runCurrent()
+        gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
     }
 
     @Test fun missingApiConfigurationIsActionableInsteadOfLoadingForever() = runTest {

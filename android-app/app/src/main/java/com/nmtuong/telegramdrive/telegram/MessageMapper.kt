@@ -35,40 +35,45 @@ object MessageMapper {
         val kind: MediaKind
         val name: String
         val duration: Int
+        var mimeType: String? = null
         when (type) {
             "messagePhoto" -> {
                 media = content.obj("photo") ?: return null
                 val size = media["sizes"]?.jsonArray?.lastOrNull()?.jsonObject ?: return null
                 file = size.obj("photo") ?: return null
-                kind = MediaKind.IMAGE; name = "photo-$messageId.jpg"; duration = 0
+                kind = MediaKind.IMAGE; name = "photo-$messageId.jpg"; duration = 0; mimeType = "image/jpeg"
             }
             "messageVideo" -> {
                 media = content.obj("video") ?: return null; file = media.obj("video") ?: return null
                 kind = MediaKind.VIDEO
                 name = media.string("file_name").orEmpty().ifBlank { "video-$messageId.mp4" }
                 duration = media.int("duration")
+                mimeType = media.string("mime_type")
             }
             "messageAnimation" -> {
                 media = content.obj("animation") ?: return null; file = media.obj("animation") ?: return null
                 kind = MediaKind.ANIMATION
                 name = media.string("file_name").orEmpty().ifBlank { "animation-$messageId" }
                 duration = media.int("duration")
+                mimeType = media.string("mime_type")
             }
             "messageAudio" -> {
                 media = content.obj("audio") ?: return null; file = media.obj("audio") ?: return null
                 kind = MediaKind.AUDIO
                 name = media.string("file_name").orEmpty().ifBlank { "audio-$messageId.mp3" }
                 duration = media.int("duration")
+                mimeType = media.string("mime_type")
             }
             "messageVoiceNote" -> {
                 media = content.obj("voice_note") ?: return null; file = media.obj("voice") ?: return null
-                kind = MediaKind.AUDIO; name = "voice-$messageId.ogg"; duration = media.int("duration")
+                kind = MediaKind.AUDIO; name = "voice-$messageId.ogg"; duration = media.int("duration"); mimeType = "audio/ogg"
             }
             "messageDocument" -> {
                 media = content.obj("document") ?: return null; file = media.obj("document") ?: return null
-                val mimeType = media.string("mime_type").orEmpty()
-                kind = if (mimeType == "application/pdf") MediaKind.PDF else MediaKind.DOCUMENT
+                val documentMimeType = media.string("mime_type").orEmpty()
+                kind = if (documentMimeType == "application/pdf") MediaKind.PDF else MediaKind.DOCUMENT
                 name = media.string("file_name").orEmpty().ifBlank { "document-$messageId" }; duration = 0
+                mimeType = documentMimeType
             }
             else -> return null
         }
@@ -85,6 +90,7 @@ object MessageMapper {
             sizeBytes = file.long("size"),
             durationSeconds = duration,
             localPath = path.takeIf { complete },
+            mimeType = mimeType,
         )
     }
 

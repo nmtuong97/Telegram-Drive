@@ -29,11 +29,12 @@ data class FakeTelegramCatalog(
                 MediaItem(106, 10, "mountain-duplicate.jpg", MediaKind.IMAGE, DownloadState.NotDownloaded, fileId = 100),
                 MediaItem(101, 10, "demo.mp4", MediaKind.VIDEO, DownloadState.Downloading(42)),
                 MediaItem(105, 10, "demo.gif", MediaKind.ANIMATION, DownloadState.NotDownloaded),
-                MediaItem(107, 10, "voice-note.ogg", MediaKind.AUDIO, DownloadState.NotDownloaded),
-                MediaItem(108, 10, "notes.txt", MediaKind.DOCUMENT, DownloadState.NotDownloaded),
-                MediaItem(102, 11, "theme.mp3", MediaKind.AUDIO, DownloadState.Complete),
-                MediaItem(103, 12, "specification.pdf", MediaKind.PDF, DownloadState.Complete),
-                MediaItem(104, 12, "archive.zip", MediaKind.DOCUMENT, DownloadState.Failed("Sample offline failure")),
+                MediaItem(107, 10, "voice-note.ogg", MediaKind.AUDIO, DownloadState.NotDownloaded, mimeType = "audio/ogg"),
+                MediaItem(108, 10, "notes.txt", MediaKind.DOCUMENT, DownloadState.NotDownloaded, mimeType = "text/plain"),
+                MediaItem(109, 10, "specification.pdf", MediaKind.PDF, DownloadState.NotDownloaded, mimeType = "application/pdf"),
+                MediaItem(102, 11, "theme.mp3", MediaKind.AUDIO, DownloadState.Complete, mimeType = "audio/mpeg"),
+                MediaItem(103, 12, "specification.pdf", MediaKind.PDF, DownloadState.Complete, mimeType = "application/pdf"),
+                MediaItem(104, 12, "archive.zip", MediaKind.DOCUMENT, DownloadState.Failed("Sample offline failure"), mimeType = "application/zip"),
             )
 
             val rawMessages = listOf(
@@ -51,7 +52,13 @@ data class FakeTelegramCatalog(
                 FakeRawMessage(104L, 10L, mediaItem = MediaItem(104L, 10L, "mountain-duplicate.jpg", MediaKind.IMAGE, DownloadState.NotDownloaded, fileId = 100)),
                 FakeRawMessage(103L, 10L, text = "Text message before video"),
                 FakeRawMessage(102L, 10L, mediaItem = MediaItem(102L, 10L, "trailer.mp4", MediaKind.VIDEO, DownloadState.NotDownloaded, fileId = 102)),
-                FakeRawMessage(101L, 10L, mediaItem = MediaItem(101L, 10L, "notes.txt", MediaKind.DOCUMENT, DownloadState.NotDownloaded, fileId = 108)),
+                FakeRawMessage(101L, 10L, mediaItem = MediaItem(101L, 10L, "notes.txt", MediaKind.DOCUMENT, DownloadState.NotDownloaded, fileId = 108, mimeType = "text/plain")),
+                FakeRawMessage(100L, 10L, mediaItem = MediaItem(100L, 10L, "demo.gif", MediaKind.ANIMATION, DownloadState.NotDownloaded, fileId = 105, mimeType = "image/gif")),
+                FakeRawMessage(99L, 10L, mediaItem = MediaItem(99L, 10L, "voice-note.ogg", MediaKind.AUDIO, DownloadState.NotDownloaded, fileId = 107, mimeType = "audio/ogg")),
+                FakeRawMessage(98L, 10L, mediaItem = MediaItem(98L, 10L, "specification.pdf", MediaKind.PDF, DownloadState.NotDownloaded, fileId = 109, mimeType = "application/pdf")),
+                FakeRawMessage(90L, 11L, mediaItem = MediaItem(90L, 11L, "theme.mp3", MediaKind.AUDIO, DownloadState.NotDownloaded, fileId = 102, mimeType = "audio/mpeg")),
+                FakeRawMessage(89L, 12L, mediaItem = MediaItem(89L, 12L, "specification.pdf", MediaKind.PDF, DownloadState.NotDownloaded, fileId = 103, mimeType = "application/pdf")),
+                FakeRawMessage(88L, 12L, mediaItem = MediaItem(88L, 12L, "archive.zip", MediaKind.DOCUMENT, DownloadState.NotDownloaded, fileId = 104, mimeType = "application/zip")),
             )
 
             return FakeTelegramCatalog(account, sources, media, rawMessages)

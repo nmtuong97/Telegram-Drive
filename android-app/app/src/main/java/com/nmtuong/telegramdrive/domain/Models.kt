@@ -150,6 +150,7 @@ data class MediaItem(
   val sizeBytes: Long = 0,
   val durationSeconds: Int = 0,
   val localPath: String? = null,
+  val mimeType: String? = null,
 )
 
 sealed interface LibraryState {
@@ -163,8 +164,11 @@ sealed interface LibraryState {
 sealed interface PreviewTarget {
   data class Image(val itemId: Long, val path: String) : PreviewTarget
   data class Video(val itemId: Long, val path: String) : PreviewTarget
-  data class Audio(val itemId: Long, val path: String) : PreviewTarget
+  data class Animation(val itemId: Long, val path: String, val mimeType: String? = null) : PreviewTarget
+  data class Audio(val itemId: Long, val path: String, val mimeType: String? = null) : PreviewTarget
   data class Pdf(val itemId: Long, val path: String) : PreviewTarget
+  data class Text(val itemId: Long, val path: String, val mimeType: String? = null) : PreviewTarget
+  data class External(val itemId: Long, val path: String, val mimeType: String? = null) : PreviewTarget
 }
 
 /**
@@ -178,9 +182,10 @@ data class HistoryPage(
   /** True when TDLib confirmed no older messages exist in this history. */
   val endOfHistory: Boolean,
   val error: String? = null,
+  val offline: Boolean = false,
 ) {
   companion object {
-    fun error(message: String) = HistoryPage(emptyList(), null, true, message)
+    fun error(message: String, offline: Boolean = false) = HistoryPage(emptyList(), null, true, message, offline)
     fun empty() = HistoryPage(emptyList(), null, true)
   }
 }

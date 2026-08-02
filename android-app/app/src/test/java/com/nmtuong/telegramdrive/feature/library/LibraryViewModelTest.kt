@@ -45,7 +45,7 @@ class LibraryViewModelTest {
         val factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return LibraryViewModel(repo, repo.identityProvider) as T
+                return LibraryViewModel(repo, repo.identityProvider, testDispatcher) as T
             }
         }
         return ViewModelProvider(store, factory)[LibraryViewModel::class.java]
@@ -130,7 +130,7 @@ class LibraryViewModelTest {
             runCurrent()
 
             val stateAfterCancel = viewModel.transferStates.value[100]
-            assertTrue(stateAfterCancel == null || stateAfterCancel.isTerminal)
+            assertTrue("Expected terminal cancel state but was $stateAfterCancel", stateAfterCancel == null || stateAfterCancel.isTerminal)
         } finally {
             store.clear()
             runCurrent()

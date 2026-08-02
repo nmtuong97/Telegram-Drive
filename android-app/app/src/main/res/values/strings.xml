@@ -46,4 +46,11 @@
     <string name="download_canceled">Download canceled</string>
     <string name="retry">Retry</string>
     <string name="source_selector">Source</string>
+    <string name="pdf_preview">PDF preview</string>
+    <string name="previous_page">Previous</string>
+    <string name="next_page">Next</string>
+    <string name="page_of">Page %1$d of %2$d</string>
+    <string name="open_file">Open with another app</string>
+    <string name="external_open_description">This file is not supported for in-app preview. It will be shared as a temporary read-only content URI.</string>
+    <string name="no_compatible_app">No compatible app is installed for this file.</string>
 </resources>

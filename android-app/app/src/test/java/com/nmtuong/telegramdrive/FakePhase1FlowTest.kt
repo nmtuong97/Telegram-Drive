@@ -75,7 +75,8 @@ class FakePhase1FlowTest {
 
     assertEquals(ActionResult.ACCEPTED, repository.download(animation.fileId))
     advanceUntilIdle()
-    assertTrue(item(repository, animation.fileId).downloadState is DownloadState.Failed)
+    assertEquals(DownloadState.Complete, item(repository, animation.fileId).downloadState)
+    assertTrue(repository.preview(animation.id) is PreviewTarget.Animation)
     repository.close()
   }
 

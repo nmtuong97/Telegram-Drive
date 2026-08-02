@@ -16,6 +16,11 @@ import com.nmtuong.telegramdrive.feature.library.LibraryScreen
 import com.nmtuong.telegramdrive.feature.library.LibraryViewModel
 import com.nmtuong.telegramdrive.feature.preview.ImagePreviewScreen
 import com.nmtuong.telegramdrive.feature.preview.VideoPreviewScreen
+import com.nmtuong.telegramdrive.feature.preview.AnimationPreviewScreen
+import com.nmtuong.telegramdrive.feature.preview.AudioPreviewScreen
+import com.nmtuong.telegramdrive.feature.preview.PdfPreviewScreen
+import com.nmtuong.telegramdrive.feature.preview.TextPreviewScreen
+import com.nmtuong.telegramdrive.feature.preview.ExternalPreviewScreen
 
 @Composable
 fun AppNavigation(container: AppContainer) {
@@ -31,9 +36,11 @@ fun AppNavigation(container: AppContainer) {
   when (val target = preview) {
     is PreviewTarget.Image -> ImagePreviewScreen(target.path) { preview = null }
     is PreviewTarget.Video -> VideoPreviewScreen(target.path) { preview = null }
-    // Audio and PDF preview not yet supported — fall back to library
-    // Metadata is preserved in domain model; these will navigate back to library until implemented
-    is PreviewTarget.Audio, is PreviewTarget.Pdf -> { preview = null }
+    is PreviewTarget.Animation -> AnimationPreviewScreen(target.path) { preview = null }
+    is PreviewTarget.Audio -> AudioPreviewScreen(target.path) { preview = null }
+    is PreviewTarget.Pdf -> PdfPreviewScreen(target.path) { preview = null }
+    is PreviewTarget.Text -> TextPreviewScreen(target.path) { preview = null }
+    is PreviewTarget.External -> ExternalPreviewScreen(target.path, target.mimeType) { preview = null }
     null -> if (authorization.state == AuthorizationState.Ready) {
       LibraryScreen(libraryViewModel) { preview = it }
     } else {
