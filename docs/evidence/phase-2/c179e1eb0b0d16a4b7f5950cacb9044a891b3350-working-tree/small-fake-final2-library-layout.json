@@ -1,0 +1,215 @@
+[
+  {
+    "text": "Saved Messages",
+    "center": "[280,168]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[944,169]",
+    "key": 3506402
+  },
+  {
+    "text": "Source",
+    "center": "[95,284]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[540,400]",
+    "bounds": "[42,337][1038,463]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[540,1155]",
+    "bounds": "[42,495][1038,1815]",
+    "key": 3506402
+  },
+  {
+    "text": "Log out",
+    "center": "[944,168]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "state": [
+      "checked"
+    ],
+    "center": "[222,400]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[583,400]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[922,400]",
+    "key": 3506402
+  },
+  {
+    "text": "Saved Messages",
+    "center": "[222,400]",
+    "key": 3506402
+  },
+  {
+    "text": "Design Assets",
+    "center": "[583,400]",
+    "key": 3506402
+  },
+  {
+    "text": "Project Documents",
+    "center": "[922,400]",
+    "key": 3506402
+  },
+  {
+    "text": "mountain.jpg",
+    "center": "[323,558]",
+    "key": 3506402
+  },
+  {
+    "text": "image",
+    "center": "[240,619]",
+    "key": 3506402
+  },
+  {
+    "text": "Size unavailable",
+    "center": "[426,619]",
+    "key": 3506402
+  },
+  {
+    "text": "Date unavailable",
+    "center": "[317,669]",
+    "key": 3506402
+  },
+  {
+    "text": "Remote",
+    "center": "[247,719]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[218,820]",
+    "key": 3506402
+  },
+  {
+    "text": "demo.mp4",
+    "center": "[300,998]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[235,1059]",
+    "key": 3506402
+  },
+  {
+    "text": "Size unavailable",
+    "center": "[415,1059]",
+    "key": 3506402
+  },
+  {
+    "text": "Date unavailable • Duration unavailable",
+    "center": "[483,1109]",
+    "key": 3506402
+  },
+  {
+    "text": "Remote",
+    "center": "[247,1159]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[218,1260]",
+    "key": 3506402
+  },
+  {
+    "text": "mountain-duplicate.jpg",
+    "center": "[420,1438]",
+    "key": 3506402
+  },
+  {
+    "text": "image",
+    "center": "[240,1499]",
+    "key": 3506402
+  },
+  {
+    "text": "Size unavailable",
+    "center": "[426,1499]",
+    "key": 3506402
+  },
+  {
+    "text": "Date unavailable",
+    "center": "[317,1549]",
+    "key": 3506402
+  },
+  {
+    "text": "Remote",
+    "center": "[247,1599]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[218,1700]",
+    "key": 3506402
+  },
+  {
+    "text": "I",
+    "center": "[121,633]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[218,819]",
+    "key": 3506402
+  },
+  {
+    "text": "V",
+    "center": "[122,1073]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[218,1259]",
+    "key": 3506402
+  },
+  {
+    "text": "I",
+    "center": "[121,1513]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[218,1699]",
+    "key": 3506402
+  }
+]

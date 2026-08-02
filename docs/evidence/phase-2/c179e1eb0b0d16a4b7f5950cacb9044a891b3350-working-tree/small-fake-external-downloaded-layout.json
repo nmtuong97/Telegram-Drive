@@ -1,0 +1,164 @@
+[
+  {
+    "text": "Project Documents",
+    "center": "[310,168]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[944,169]",
+    "key": 3506402
+  },
+  {
+    "text": "Source",
+    "center": "[95,284]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[540,400]",
+    "bounds": "[42,337][1038,463]",
+    "key": 3506402
+  },
+  {
+    "text": "Log out",
+    "center": "[944,168]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[222,400]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[583,400]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "state": [
+      "checked"
+    ],
+    "center": "[922,400]",
+    "key": 3506402
+  },
+  {
+    "text": "Saved Messages",
+    "center": "[222,400]",
+    "key": 3506402
+  },
+  {
+    "text": "Design Assets",
+    "center": "[583,400]",
+    "key": 3506402
+  },
+  {
+    "text": "Project Documents",
+    "center": "[922,400]",
+    "key": 3506402
+  },
+  {
+    "text": "specification.pdf",
+    "center": "[359,558]",
+    "key": 3506402
+  },
+  {
+    "text": "pdf",
+    "center": "[219,619]",
+    "key": 3506402
+  },
+  {
+    "text": "Size unavailable",
+    "center": "[384,619]",
+    "key": 3506402
+  },
+  {
+    "text": "Date unavailable",
+    "center": "[317,669]",
+    "key": 3506402
+  },
+  {
+    "text": "Remote",
+    "center": "[247,719]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[218,820]",
+    "key": 3506402
+  },
+  {
+    "text": "archive.zip",
+    "center": "[301,998]",
+    "key": 3506402
+  },
+  {
+    "text": "document",
+    "center": "[268,1059]",
+    "key": 3506402
+  },
+  {
+    "text": "Size unavailable",
+    "center": "[482,1059]",
+    "key": 3506402
+  },
+  {
+    "text": "Date unavailable",
+    "center": "[317,1109]",
+    "key": 3506402
+  },
+  {
+    "text": "Local",
+    "center": "[232,1159]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[202,1260]",
+    "key": 3506402
+  },
+  {
+    "text": "P",
+    "center": "[122,633]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[218,819]",
+    "key": 3506402
+  },
+  {
+    "text": "D",
+    "center": "[121,1073]",
+    "key": 3506402
+  },
+  {
+    "text": "Preview",
+    "center": "[202,1259]",
+    "key": 3506402
+  }
+]
