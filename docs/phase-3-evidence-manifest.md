@@ -14,7 +14,8 @@ real-account gate. A file is not described as passing unless it was actually pro
 | Working branch | `agent/android-phase-3` |
 | Official plan | [`android-app/MASTER_PLAN.md`](../android-app/MASTER_PLAN.md) |
 | Detailed plan | [`docs/phase-3-plan.md`](phase-3-plan.md) |
-| Final implementation commit | Recorded in the Phase 3 implementation commit; final evidence commit is separate. |
+| Final implementation commit | `3329d13` (`feat(android): implement phase 3 saved media gallery`). |
+| Final evidence/documentation commit | Recorded after this evidence update. |
 
 ## Commands and exit codes
 

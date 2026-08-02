@@ -13,7 +13,8 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 - Working branch: `agent/android-phase-3`
 - Official Master Plan: [`android-app/MASTER_PLAN.md`](../android-app/MASTER_PLAN.md)
 - Implementation plan: [`docs/phase-3-plan.md`](phase-3-plan.md)
-- Final implementation commit: recorded in the Phase 3 implementation commit; the final evidence commit is listed in the handoff.
+- Final implementation commit: `3329d13` (`feat(android): implement phase 3 saved media gallery`).
+- Final evidence/documentation commit: recorded after this evidence update.
 
 ## Implemented
 
