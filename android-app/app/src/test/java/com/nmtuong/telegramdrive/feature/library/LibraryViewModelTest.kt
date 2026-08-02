@@ -7,6 +7,8 @@ import com.nmtuong.telegramdrive.data.FakeTelegramRepository
 import com.nmtuong.telegramdrive.data.fake.FakeTelegramCatalog
 import com.nmtuong.telegramdrive.domain.AuthorizationAction
 import com.nmtuong.telegramdrive.domain.AuthorizationState
+import com.nmtuong.telegramdrive.domain.MediaKind
+import com.nmtuong.telegramdrive.domain.PreviewTarget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -18,6 +20,7 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import java.io.File
 
 /**
  * LibraryViewModel tests — updated for CP2 & CP6.
@@ -135,6 +138,28 @@ class LibraryViewModelTest {
             store.clear()
             runCurrent()
             repo.close()
+        }
+    }
+
+    @Test
+    fun `preview uses persisted local path when coordinator has no in-memory transfer state`() = runTest {
+        val catalog = FakeTelegramCatalog.stable()
+        val repo = FakeTelegramRepository(catalog, dispatcher = testDispatcher)
+        val store = ViewModelStore()
+        val localFile = File.createTempFile("telegram-drive-preview", ".pdf")
+        try {
+            val viewModel = createViewModel(repo, store)
+            repo.reachReady()
+            runCurrent()
+
+            val target = viewModel.previewPagingItem(103L, MediaKind.PDF, 103, localFile.path)
+
+            assertTrue(target is PreviewTarget.Pdf)
+        } finally {
+            store.clear()
+            runCurrent()
+            repo.close()
+            localFile.delete()
         }
     }
 

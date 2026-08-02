@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,6 +17,10 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import com.nmtuong.telegramdrive.R
 import com.nmtuong.telegramdrive.domain.*
 import java.io.File
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @Composable
 fun LibraryScreen(viewModel: LibraryViewModel, onPreview: (PreviewTarget) -> Unit) {
@@ -141,7 +146,7 @@ fun LibraryScreen(viewModel: LibraryViewModel, onPreview: (PreviewTarget) -> Uni
                                         onDownload = { viewModel.download(item) },
                                         onCancel = { viewModel.cancel(item.fileId) },
                                         onPreview = {
-                                            viewModel.previewPagingItem(item.id, item.kind, item.fileId)?.let(onPreview)
+                                            viewModel.previewPagingItem(item.id, item.kind, item.fileId, item.localPath)?.let(onPreview)
                                         },
                                     )
                                 }
@@ -204,20 +209,51 @@ private fun MediaCard(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(item.name, style = MaterialTheme.typography.titleMedium)
-
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = item.kind.name.lowercase(),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                if (item.sizeBytes > 0) {
+                MediaKindBadge(item.kind)
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(item.name, style = MaterialTheme.typography.titleMedium)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = item.kind.name.lowercase(),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            text = if (item.sizeBytes > 0) formatBytes(item.sizeBytes) else "Size unavailable",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    val metadata = buildList {
+                        add(formatDate(item.dateEpochSeconds))
+                        when {
+                            item.durationSeconds > 0 -> add(formatDuration(item.durationSeconds))
+                            item.kind in setOf(MediaKind.VIDEO, MediaKind.ANIMATION, MediaKind.AUDIO) -> {
+                                add("Duration unavailable")
+                            }
+                        }
+                    }
                     Text(
-                        text = formatBytes(item.sizeBytes),
+                        text = metadata.joinToString(" • "),
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = transferState.statusLabel(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (transferState is TransferState.TransferFailed) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                 }
             }
@@ -239,6 +275,13 @@ private fun MediaCard(
                 TransferState.TransferCancelled -> {
                     Text(
                         text = stringResource(R.string.download_canceled),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                TransferState.Unavailable -> {
+                    Text(
+                        text = "File unavailable",
+                        color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -266,6 +309,23 @@ private fun MediaCard(
     }
 }
 
+@Composable
+private fun MediaKindBadge(kind: MediaKind) {
+    Surface(
+        modifier = Modifier.size(36.dp),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = kind.name.first().toString(),
+                style = MaterialTheme.typography.labelLarge,
+            )
+        }
+    }
+}
+
 private fun DownloadState.toTransferState(localPath: String?): TransferState = when (this) {
     DownloadState.NotDownloaded -> TransferState.NotStarted
     is DownloadState.Downloading -> TransferState.InProgress(percent)
@@ -283,4 +343,36 @@ private fun formatBytes(bytes: Long): String {
     val exp = (Math.log(bytes.toDouble()) / Math.log(1024.0)).toInt()
     val pre = "KMGTPE"[exp - 1]
     return String.format("%.1f %sB", bytes / Math.pow(1024.0, exp.toDouble()), pre)
+}
+
+private val mediaDateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.getDefault())
+
+private fun formatDate(epochSeconds: Long): String = if (epochSeconds > 0) {
+    Instant.ofEpochSecond(epochSeconds)
+        .atZone(ZoneId.systemDefault())
+        .toLocalDate()
+        .format(mediaDateFormatter)
+} else {
+    "Date unavailable"
+}
+
+private fun formatDuration(totalSeconds: Int): String {
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) {
+        String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format(Locale.getDefault(), "%d:%02d", minutes, seconds)
+    }
+}
+
+private fun TransferState.statusLabel(): String = when (this) {
+    TransferState.NotStarted -> "Remote"
+    TransferState.Queued -> "Queued"
+    is TransferState.InProgress -> "Downloading"
+    is TransferState.Completed -> "Local"
+    is TransferState.TransferFailed -> "Error"
+    TransferState.TransferCancelled -> "Canceled"
+    TransferState.Unavailable -> "Unavailable"
 }

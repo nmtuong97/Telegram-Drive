@@ -151,6 +151,8 @@ data class MediaItem(
   val durationSeconds: Int = 0,
   val localPath: String? = null,
   val mimeType: String? = null,
+  /** TDLib message date in Unix seconds; zero when the source does not provide it. */
+  val dateEpochSeconds: Long = 0L,
 )
 
 sealed interface LibraryState {

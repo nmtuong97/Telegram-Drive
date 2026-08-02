@@ -23,6 +23,7 @@ class MessageMapperTest {
         val msg = """{
             "id": 100,
             "chat_id": 10,
+            "date": 1710000000,
             "content": {
                 "@type": "messagePhoto",
                 "photo": {
@@ -40,6 +41,7 @@ class MessageMapperTest {
         assertEquals(50, item.fileId)
         assertEquals("photo-100.jpg", item.name)
         assertEquals(DownloadState.NotDownloaded, item.downloadState)
+        assertEquals(1710000000L, item.dateEpochSeconds)
     }
 
     @Test
@@ -124,6 +126,27 @@ class MessageMapperTest {
         assertNotNull(item)
         assertEquals(MediaKind.PDF, item!!.kind)
         assertEquals("report.pdf", item.name)
+    }
+
+    @Test
+    fun `maps messageDocument with mp4 filename and blank mime type to VIDEO MediaItem`() {
+        val msg = """{
+            "id": 302,
+            "chat_id": 10,
+            "content": {
+                "@type": "messageDocument",
+                "document": {
+                    "file_name": "movie.mp4",
+                    "mime_type": "",
+                    "document": {"id": 72, "size": 4096, "local": {"path": "", "is_downloading_completed": false}}
+                }
+            }
+        }"""
+        val item = MessageMapper.mapMessage(parse(msg))
+        assertNotNull(item)
+        assertEquals(MediaKind.VIDEO, item!!.kind)
+        assertEquals("movie.mp4", item.name)
+        assertEquals("video/mp4", item.mimeType)
     }
 
     @Test

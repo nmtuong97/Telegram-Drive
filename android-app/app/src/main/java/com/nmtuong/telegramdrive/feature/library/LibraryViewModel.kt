@@ -177,8 +177,8 @@ class LibraryViewModel(
         }
     }
 
-    fun previewPagingItem(itemId: Long, mediaKind: MediaKind, fileId: Int): PreviewTarget? {
-        val localPath = activeCoordinator?.getCompletedLocalPath(fileId) ?: return null
+    fun previewPagingItem(itemId: Long, mediaKind: MediaKind, fileId: Int, knownLocalPath: String? = null): PreviewTarget? {
+        val localPath = activeCoordinator?.getCompletedLocalPath(fileId) ?: knownLocalPath ?: return null
         return repository.previewPagingItem(itemId, mediaKind, localPath)
     }
 

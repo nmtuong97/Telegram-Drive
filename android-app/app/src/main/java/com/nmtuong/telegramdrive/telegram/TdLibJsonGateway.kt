@@ -1037,6 +1037,10 @@ class TdLibJsonGateway internal constructor(
     private fun handleFile(file: JsonObject) {
         val fileId = file.int("id")
         val context = synchronized(lock) { pendingTransferContexts[fileId] } ?: return
+        if (synchronized(lock) { fileId in pendingCancellations }) {
+            updateItem(fileId) { it.copy(downloadState = DownloadState.Canceled, localPath = null) }
+            return
+        }
         val local = file.obj("local") ?: return
         val complete = local.bool("is_downloading_completed")
         val total = file.long("expected_size").takeIf { it > 0 } ?: file.long("size")

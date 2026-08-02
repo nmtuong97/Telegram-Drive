@@ -1,5 +1,6 @@
 package com.nmtuong.telegramdrive.telegram
 
+import com.nmtuong.telegramdrive.data.AccountSessionIdentityProvider
 import com.nmtuong.telegramdrive.domain.*
 import com.nmtuong.telegramdrive.security.TelegramApiConfiguration
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -123,11 +124,13 @@ class TdLibJsonGatewayTest {
 
     @Test fun cancelAcknowledgementBlocksRetryAndIgnoresLateFileUpdate() = runTest {
         val native = RecordingNative()
+        val identityProvider = AccountSessionIdentityProvider().also { it.initializeFake(7L) }
         val gateway = TdLibJsonGateway(
             configuration = TelegramApiConfiguration(1, "configured-placeholder"),
             native = native,
             libraryLoader = NativeLibraryLoader {},
             dispatcher = StandardTestDispatcher(testScheduler),
+            identityProvider = identityProvider,
         )
         gateway.start()
         runCurrent()
@@ -150,7 +153,10 @@ class TdLibJsonGatewayTest {
         assertEquals(DownloadState.Canceled, canceled.downloadState)
         gateway.handleResponseForTest("""{"@type":"ok","@extra":"$cancelExtra"}""")
         assertEquals(ActionResult.ACCEPTED, gateway.download(99))
-        gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
+        gateway.close()
+        runCurrent()
+        advanceTimeBy(1)
+        runCurrent()
         assertEquals(GatewayLifecycle.CLOSED, gateway.state.value.lifecycle)
     }
 
@@ -180,7 +186,10 @@ class TdLibJsonGatewayTest {
         assertFalse(gateway.authorization.value.actionPending)
         assertFalse(gateway.authorization.value.safeError.orEmpty().contains("000000000"))
         assertFalse(gateway.authorization.value.safeError.orEmpty().contains("value-c"))
+        gateway.close()
+        runCurrent()
         gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
+        runCurrent()
     }
 
     @Test fun missingApiConfigurationIsActionableInsteadOfLoadingForever() = runTest {
@@ -195,6 +204,8 @@ class TdLibJsonGatewayTest {
         assertEquals(AuthorizationState.MissingConfiguration, gateway.authorization.value.state)
         assertEquals(AuthorizationErrorKind.CONFIGURATION, gateway.authorization.value.error?.kind)
         assertFalse(gateway.authorization.value.actionPending)
+        gateway.close()
+        runCurrent()
         gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
         runCurrent()
     }
@@ -221,6 +232,8 @@ class TdLibJsonGatewayTest {
         assertEquals(ActionResult.ACCEPTED, gateway.submit(AuthorizationAction.ChangePhone("+19999999999")))
         assertTrue(native.requests.last().contains("setAuthenticationPhoneNumber"))
         assertTrue(native.requests.last().contains("+19999999999"))
+        gateway.close()
+        runCurrent()
         gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
         runCurrent()
     }
@@ -246,6 +259,8 @@ class TdLibJsonGatewayTest {
             AuthorizationState.WaitingForOtherDevice("tg://login?token=safe-placeholder"),
             gateway.authorization.value.state,
         )
+        gateway.close()
+        runCurrent()
         gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
         runCurrent()
     }
@@ -277,6 +292,8 @@ class TdLibJsonGatewayTest {
         gateway.handleResponseForTest("""{"@type":"ok","@extra":"$registrationExtra"}""")
         gateway.handleResponseForTest("""{"@type":"authorizationStateReady"}""")
         assertEquals(AuthorizationState.Ready, gateway.authorization.value.state)
+        gateway.close()
+        runCurrent()
         gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
         runCurrent()
     }
@@ -298,6 +315,8 @@ class TdLibJsonGatewayTest {
 
         assertFalse(gateway.authorization.value.actionPending)
         assertEquals(AuthorizationErrorKind.NETWORK, gateway.authorization.value.error?.kind)
+        gateway.close()
+        runCurrent()
         gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
         runCurrent()
     }
@@ -316,6 +335,8 @@ class TdLibJsonGatewayTest {
         assertEquals(ActionResult.INVALID_STATE, gateway.submit(AuthorizationAction.SubmitPhone("+10000000000")))
         assertFalse(gateway.authorization.value.actionPending)
         assertEquals(AuthorizationErrorKind.NETWORK, gateway.authorization.value.error?.kind)
+        gateway.close()
+        runCurrent()
         gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
         runCurrent()
     }
@@ -338,6 +359,7 @@ private class RecordingNative(private val failCreate: Boolean = false) : TdLibNa
     var closeRequests = 0
     val requests = mutableListOf<String>()
     private var responseDelivered = false
+    private var closeResponseDelivered = false
 
     override fun createClientId(): Int {
         createCalls++
@@ -351,6 +373,10 @@ private class RecordingNative(private val failCreate: Boolean = false) : TdLibNa
     }
 
     override fun receive(timeoutSeconds: Double): String? {
+        if (closeRequests > 0 && !closeResponseDelivered) {
+            closeResponseDelivered = true
+            return """{"@type":"authorizationStateClosed"}"""
+        }
         if (responseDelivered) return null
         responseDelivered = true
         return """{"@type":"authorizationStateWaitTdlibParameters"}"""

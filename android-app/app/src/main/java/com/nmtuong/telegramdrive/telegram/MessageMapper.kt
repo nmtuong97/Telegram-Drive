@@ -70,10 +70,11 @@ object MessageMapper {
             }
             "messageDocument" -> {
                 media = content.obj("document") ?: return null; file = media.obj("document") ?: return null
+                val documentName = media.string("file_name").orEmpty().ifBlank { "document-$messageId" }
                 val documentMimeType = media.string("mime_type").orEmpty()
-                kind = if (documentMimeType == "application/pdf") MediaKind.PDF else MediaKind.DOCUMENT
-                name = media.string("file_name").orEmpty().ifBlank { "document-$messageId" }; duration = 0
-                mimeType = documentMimeType
+                kind = mediaKindForDocument(documentMimeType, documentName)
+                name = documentName; duration = 0
+                mimeType = documentMimeType.ifBlank { mimeTypeForDocumentName(documentName) }
             }
             else -> return null
         }
@@ -91,6 +92,7 @@ object MessageMapper {
             durationSeconds = duration,
             localPath = path.takeIf { complete },
             mimeType = mimeType,
+            dateEpochSeconds = message.long("date"),
         )
     }
 
@@ -101,6 +103,36 @@ object MessageMapper {
     fun mapMessages(elements: List<JsonElement>): List<MediaItem> =
         elements.mapNotNull { mapMessage(it.jsonObject) }
 }
+
+private fun mediaKindForDocument(mimeType: String, name: String): MediaKind {
+    val extension = name.substringAfterLast('.', "").lowercase()
+    val normalizedMimeType = mimeType.trim().lowercase()
+    return when {
+        normalizedMimeType == "application/pdf" || extension == "pdf" -> MediaKind.PDF
+        normalizedMimeType.startsWith("video/") || extension in DOCUMENT_VIDEO_EXTENSIONS -> MediaKind.VIDEO
+        normalizedMimeType.startsWith("audio/") || extension in DOCUMENT_AUDIO_EXTENSIONS -> MediaKind.AUDIO
+        normalizedMimeType == "image/gif" || extension == "gif" -> MediaKind.ANIMATION
+        else -> MediaKind.DOCUMENT
+    }
+}
+
+private fun mimeTypeForDocumentName(name: String): String? = when (name.substringAfterLast('.', "").lowercase()) {
+    "pdf" -> "application/pdf"
+    "mp4" -> "video/mp4"
+    "mkv" -> "video/x-matroska"
+    "mov" -> "video/quicktime"
+    "webm" -> "video/webm"
+    "mp3" -> "audio/mpeg"
+    "m4a" -> "audio/mp4"
+    "ogg", "opus" -> "audio/ogg"
+    "wav" -> "audio/wav"
+    "flac" -> "audio/flac"
+    "gif" -> "image/gif"
+    else -> null
+}
+
+private val DOCUMENT_VIDEO_EXTENSIONS = setOf("3gp", "avi", "flv", "m4v", "mkv", "mov", "mp4", "webm", "wmv")
+private val DOCUMENT_AUDIO_EXTENSIONS = setOf("aac", "amr", "flac", "m4a", "mp3", "oga", "ogg", "opus", "wav", "wma")
 
 internal fun JsonObject.string(name: String): String? = this[name]?.jsonPrimitive?.contentOrNull
 internal fun JsonObject.int(name: String): Int = this[name]?.jsonPrimitive?.intOrNull ?: 0
