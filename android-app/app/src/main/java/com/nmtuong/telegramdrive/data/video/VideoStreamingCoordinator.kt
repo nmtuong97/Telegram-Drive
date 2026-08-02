@@ -71,12 +71,30 @@ class VideoStreamingCoordinator(
     return lengthBytes.takeIf { it > 0L } ?: androidx.media3.common.C.LENGTH_UNSET.toLong()
   }
 
+  /**
+   * Opens a Media3 reader without changing the coordinator's compatibility
+   * cursor. Transfer coordination is shared per stable file, but each data
+   * source owns its playback position.
+   */
+  fun openReader(position: Long, length: Long): Long {
+    check(!closed.get()) { "Video streaming coordinator is closed" }
+    return length.coerceAtLeast(0L).takeIf { it > 0L } ?: androidx.media3.common.C.LENGTH_UNSET.toLong()
+  }
+
   suspend fun readAt(buffer: ByteArray, offset: Int, length: Int): Int {
+    if (closed.get()) return androidx.media3.common.C.RESULT_END_OF_INPUT
+    if (length == 0) return 0
+    val read = readAt(positionBytes, buffer, offset, length)
+    positionBytes += read.coerceAtLeast(0)
+    return read
+  }
+
+  /** Reads at an explicit reader position without mutating another reader's cursor. */
+  suspend fun readAt(readPosition: Long, buffer: ByteArray, offset: Int, length: Int): Int {
     if (closed.get()) return androidx.media3.common.C.RESULT_END_OF_INPUT
     if (length == 0) return 0
     return mutex.withLock {
       val generation = requestGeneration.get()
-      val readPosition = positionBytes
       val available = awaitReadableRange(generation, readPosition, length.toLong())
       if (closed.get() || generation != requestGeneration.get()) throw CancellationException("Video range superseded")
       val path = available.localPath ?: throw IllegalStateException("TDLib did not expose a readable partial path")
@@ -88,10 +106,9 @@ class VideoStreamingCoordinator(
         if (available.isDownloadingCompleted) return@withLock androidx.media3.common.C.RESULT_END_OF_INPUT
         throw IllegalStateException("Partial file ended before requested range")
       }
-      positionBytes += read
       _status.value = _status.value.copy(
         state = if (available.isDownloadingCompleted) VideoStreamingState.COMPLETE else VideoStreamingState.PLAYING,
-        positionBytes = positionBytes,
+        positionBytes = readPosition + read,
         bufferedPrefixBytes = available.downloadedPrefixSizeBytes,
         expectedSizeBytes = available.expectedSizeBytes,
         error = null,
@@ -116,7 +133,7 @@ class VideoStreamingCoordinator(
   private suspend fun awaitReadableRange(generation: Long, position: Long, length: Long): com.nmtuong.telegramdrive.domain.TdLibFileSnapshot {
     return try {
       _status.value = _status.value.copy(
-        state = if (position == positionBytes) VideoStreamingState.BUFFERING else VideoStreamingState.SEEKING,
+        state = VideoStreamingState.BUFFERING,
         positionBytes = position,
         requestedBytes = length,
         error = null,

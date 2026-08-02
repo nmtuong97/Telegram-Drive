@@ -55,6 +55,33 @@ class VideoStreamingCoordinatorTest {
   }
 
   @Test
+  fun sharedCoordinatorKeepsIndependentReaderPositions() = runTest {
+    val root = Files.createTempDirectory("tdlib-stream-readers-").toFile()
+    val content = ByteArray(2 * 1024 * 1024) { index -> (index % 251).toByte() }
+    val gateway = RangeGateway(root, content)
+    val coordinator = VideoStreamingCoordinator(
+      gateway = gateway,
+      fileId = 77,
+      stableFileIdentity = "remote-unique:video-77",
+      rangeSizeBytes = 4096L,
+      waitTimeoutMs = 2_000L,
+    )
+
+    coordinator.openReader(0L, -1L)
+    coordinator.openReader(1_048_576L, -1L)
+    val first = ByteArray(64)
+    val second = ByteArray(64)
+
+    assertEquals(64, coordinator.readAt(0L, first, 0, first.size))
+    assertEquals(64, coordinator.readAt(1_048_576L, second, 0, second.size))
+    assertArrayEquals(content.copyOfRange(0, 64), first)
+    assertArrayEquals(content.copyOfRange(1_048_576, 1_048_640), second)
+
+    coordinator.close()
+    root.deleteRecursively()
+  }
+
+  @Test
   fun rejectsCompletedSnapshotWhenLocalFileIsShorterThanExpected() = runTest {
     val root = Files.createTempDirectory("tdlib-stream-short-").toFile()
     val path = root.resolve("video.partial").also {

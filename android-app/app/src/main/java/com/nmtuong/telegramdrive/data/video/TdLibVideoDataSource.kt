@@ -22,6 +22,7 @@ class TdLibVideoDataSource(
   private var release: (() -> Unit)? = null
   private var opened = false
   private var remainingBytes = C.LENGTH_UNSET.toLong()
+  private var positionBytes = 0L
   private var uri: Uri? = null
 
   @Throws(IOException::class)
@@ -31,7 +32,8 @@ class TdLibVideoDataSource(
     release = releaseFactory(dataSpec, activeCoordinator)
     return try {
       uri = dataSpec.uri
-      remainingBytes = activeCoordinator.open(dataSpec.position, dataSpec.length)
+      positionBytes = dataSpec.position
+      remainingBytes = activeCoordinator.openReader(dataSpec.position, dataSpec.length)
       opened = true
       transferStarted(dataSpec)
       remainingBytes
@@ -49,7 +51,8 @@ class TdLibVideoDataSource(
     if (remainingBytes == 0L) return C.RESULT_END_OF_INPUT
     return try {
       val requested = if (remainingBytes == C.LENGTH_UNSET.toLong()) length else minOf(length.toLong(), remainingBytes).toInt()
-      val count = runBlocking { checkNotNull(coordinator).readAt(buffer, offset, requested) }
+      val count = runBlocking { checkNotNull(coordinator).readAt(positionBytes, buffer, offset, requested) }
+      positionBytes += count
       if (remainingBytes != C.LENGTH_UNSET.toLong()) remainingBytes -= count
       bytesTransferred(count)
       count

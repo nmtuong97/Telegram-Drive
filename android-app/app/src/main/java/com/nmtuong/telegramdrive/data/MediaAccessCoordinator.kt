@@ -33,6 +33,14 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
+internal fun thumbnailEvictionCandidates(
+  cached: List<CachedFileEntity>,
+  maxEntries: Int,
+): List<CachedFileEntity> {
+  val evictionCount = (cached.size - maxEntries).coerceAtLeast(0)
+  return if (evictionCount == 0) emptyList() else cached.take(evictionCount)
+}
+
 sealed interface MediaOpenResult {
   data class Opened(val path: String) : MediaOpenResult
   data class Failed(val message: String) : MediaOpenResult
@@ -282,7 +290,7 @@ class MediaAccessCoordinator(
       identity.databaseGeneration,
       CachedFileType.THUMBNAIL.name,
     )
-    cached.drop(MAX_THUMBNAIL_CACHE_ENTRIES).forEach { stale ->
+    thumbnailEvictionCandidates(cached, MAX_THUMBNAIL_CACHE_ENTRIES).forEach { stale ->
       gateway.deleteTemporaryFile(stale.tdlibFileId)
       database.cachedFileDao().upsert(
         stale.copy(
