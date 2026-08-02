@@ -15,7 +15,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import com.nmtuong.telegramdrive.R
 import java.io.File
@@ -25,7 +27,11 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 
 @OptIn(UnstableApi::class)
 @Composable
-fun VideoPreviewScreen(path: String, onBack: () -> Unit) {
+fun VideoPreviewScreen(
+  path: String,
+  onBack: () -> Unit,
+  dataSourceFactory: DataSource.Factory? = null,
+) {
   BackHandler(onBack = onBack)
   val context = LocalContext.current
   val file = remember(path) { File(path) }
@@ -36,9 +42,14 @@ fun VideoPreviewScreen(path: String, onBack: () -> Unit) {
     }
     return
   }
-  val player = remember(path) {
+  val player = remember(path, dataSourceFactory) {
     ExoPlayer.Builder(context).build().apply {
-      setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+      if (dataSourceFactory == null) {
+        setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+      } else {
+        val mediaItem = MediaItem.fromUri(Uri.parse("tdlib://telegram-media"))
+        setMediaSource(ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem))
+      }
       prepare()
     }
   }

@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
  * Dependency direction: Infrastructure never imports data-layer types (PagingSource etc.).
  * PagingSource is created by the Repository layer, not here.
  */
-interface TdLibGateway : Closeable {
+interface TdLibGateway : Closeable, SavedMediaGateway {
     val state: StateFlow<DiagnosticsState>
     val authorization: StateFlow<AuthorizationSession>
     val library: StateFlow<LibraryState>
@@ -27,7 +27,7 @@ interface TdLibGateway : Closeable {
     fun cancelDownload(fileId: Int): ActionResult
 
     fun preview(itemId: Long): PreviewTarget?
-    suspend fun getSavedMessagesChatId(): Long?
+    override suspend fun getSavedMessagesChatId(): Long?
     suspend fun getAvailableSources(): List<FileSource>
 
     /**
@@ -43,5 +43,5 @@ interface TdLibGateway : Closeable {
      *
      * Infrastructure does NOT create PagingSource. Repository owns that.
      */
-    suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage
+    override suspend fun loadHistoryPage(chatId: Long, fromMessageId: Long, limit: Int): HistoryPage
 }

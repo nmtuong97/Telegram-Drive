@@ -1,0 +1,46 @@
+[
+  {
+    "text": "Telegram sign in",
+    "center": "[379,282]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable",
+      "long-clickable"
+    ],
+    "center": "[640,480]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable"
+    ],
+    "center": "[230,696]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[324,888]",
+    "key": 3506402
+  },
+  {
+    "text": "Authentication code",
+    "center": "[348,492]",
+    "key": 3506402
+  },
+  {
+    "text": "Continue",
+    "center": "[230,696]",
+    "key": 3506402
+  },
+  {
+    "text": "Change phone number",
+    "center": "[324,888]",
+    "key": 3506402
+  }
+]

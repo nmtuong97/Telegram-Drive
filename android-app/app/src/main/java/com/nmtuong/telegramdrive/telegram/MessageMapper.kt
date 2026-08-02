@@ -19,6 +19,11 @@ import java.io.File
  * Extracted from TdLibJsonGateway for independent testability.
  * Contains no side effects — pure mapping logic.
  */
+private data class ThumbnailInfo(
+    val fileId: Int?,
+    val stableIdentity: String?,
+)
+
 object MessageMapper {
 
     /**
@@ -35,6 +40,8 @@ object MessageMapper {
         val kind: MediaKind
         val name: String
         val duration: Int
+        var width = 0
+        var height = 0
         var mimeType: String? = null
         when (type) {
             "messagePhoto" -> {
@@ -42,12 +49,16 @@ object MessageMapper {
                 val size = media["sizes"]?.jsonArray?.lastOrNull()?.jsonObject ?: return null
                 file = size.obj("photo") ?: return null
                 kind = MediaKind.IMAGE; name = "photo-$messageId.jpg"; duration = 0; mimeType = "image/jpeg"
+                width = size.int("width")
+                height = size.int("height")
             }
             "messageVideo" -> {
                 media = content.obj("video") ?: return null; file = media.obj("video") ?: return null
                 kind = MediaKind.VIDEO
                 name = media.string("file_name").orEmpty().ifBlank { "video-$messageId.mp4" }
                 duration = media.int("duration")
+                width = media.int("width")
+                height = media.int("height")
                 mimeType = media.string("mime_type")
             }
             "messageAnimation" -> {
@@ -55,6 +66,8 @@ object MessageMapper {
                 kind = MediaKind.ANIMATION
                 name = media.string("file_name").orEmpty().ifBlank { "animation-$messageId" }
                 duration = media.int("duration")
+                width = media.int("width")
+                height = media.int("height")
                 mimeType = media.string("mime_type")
             }
             "messageAudio" -> {
@@ -74,6 +87,8 @@ object MessageMapper {
                 val documentMimeType = media.string("mime_type").orEmpty()
                 kind = mediaKindForDocument(documentMimeType, documentName)
                 name = documentName; duration = 0
+                width = media.int("width")
+                height = media.int("height")
                 mimeType = documentMimeType.ifBlank { mimeTypeForDocumentName(documentName) }
             }
             else -> return null
@@ -81,6 +96,8 @@ object MessageMapper {
         val local = file.obj("local")
         val path: String? = local?.string("path")?.takeIf { it.isNotBlank() }
         val complete = local?.bool("is_downloading_completed") == true && path != null && File(path).isFile
+        val thumbnail = thumbnailFor(media)
+        val minithumbnail = media.obj("minithumbnail")
         return MediaItem(
             id = messageId,
             sourceId = chatId,
@@ -93,6 +110,15 @@ object MessageMapper {
             localPath = path.takeIf { complete },
             mimeType = mimeType,
             dateEpochSeconds = message.long("date"),
+            caption = content.obj("caption")?.string("text")?.takeIf { it.isNotBlank() },
+            width = width,
+            height = height,
+            stableFileIdentity = stableFileIdentity(file),
+            thumbnailFileId = thumbnail?.fileId,
+            thumbnailStableFileIdentity = thumbnail?.stableIdentity,
+            minithumbnailData = minithumbnail?.string("data"),
+            minithumbnailWidth = minithumbnail?.int("width") ?: 0,
+            minithumbnailHeight = minithumbnail?.int("height") ?: 0,
         )
     }
 
@@ -102,6 +128,26 @@ object MessageMapper {
      */
     fun mapMessages(elements: List<JsonElement>): List<MediaItem> =
         elements.mapNotNull { mapMessage(it.jsonObject) }
+}
+
+private fun stableFileIdentity(file: JsonObject): String {
+    val remote = file.obj("remote")
+    val uniqueId = remote?.string("unique_id")?.takeIf { it.isNotBlank() }
+    val remoteId = remote?.string("id")?.takeIf { it.isNotBlank() }
+    return when {
+        uniqueId != null -> "remote-unique:$uniqueId"
+        remoteId != null -> "remote:$remoteId"
+        file.int("id") != 0 -> "tdlib-file:${file.int("id")}"
+        else -> "unknown-file"
+    }
+}
+
+private fun thumbnailFor(media: JsonObject): ThumbnailInfo? {
+    val thumbnailFile = media.obj("thumbnail")?.obj("file")
+        ?: media["sizes"]?.jsonArray?.firstOrNull()?.jsonObject?.obj("photo")
+    return thumbnailFile?.let {
+        ThumbnailInfo(it.int("id").takeIf { id -> id != 0 }, stableFileIdentity(it))
+    }
 }
 
 private fun mediaKindForDocument(mimeType: String, name: String): MediaKind {

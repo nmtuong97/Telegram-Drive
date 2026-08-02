@@ -153,6 +153,18 @@ data class MediaItem(
   val mimeType: String? = null,
   /** TDLib message date in Unix seconds; zero when the source does not provide it. */
   val dateEpochSeconds: Long = 0L,
+  /** Message caption text, retained for the Phase 3 local search index. */
+  val caption: String? = null,
+  val width: Int = 0,
+  val height: Int = 0,
+  /** Stable remote identity; never use raw TDLib file ID as a cross-session key. */
+  val stableFileIdentity: String = "tdlib:$fileId",
+  val thumbnailFileId: Int? = null,
+  val thumbnailStableFileIdentity: String? = null,
+  /** TDLib minithumbnail bytes encoded by the infrastructure mapper. */
+  val minithumbnailData: String? = null,
+  val minithumbnailWidth: Int = 0,
+  val minithumbnailHeight: Int = 0,
 )
 
 sealed interface LibraryState {
@@ -191,6 +203,41 @@ data class HistoryPage(
     fun empty() = HistoryPage(emptyList(), null, true)
   }
 }
+
+/**
+ * Incremental Saved Messages notifications emitted by TDLib infrastructure.
+ * A null [message] means that the message no longer represents an indexed image/video.
+ */
+sealed interface SavedMessageUpdate {
+  data class Upsert(
+    val chatId: Long,
+    val message: MediaItem,
+  ) : SavedMessageUpdate
+
+  data class Changed(
+    val chatId: Long,
+    val messageId: Long,
+    val message: MediaItem?,
+  ) : SavedMessageUpdate
+
+  data class Deleted(
+    val chatId: Long,
+    val messageId: Long,
+  ) : SavedMessageUpdate
+}
+
+/** Reconciled snapshot of a TDLib file/local partial file. */
+data class TdLibFileSnapshot(
+  val fileId: Int,
+  val stableFileIdentity: String?,
+  val localPath: String?,
+  val expectedSizeBytes: Long,
+  val downloadedSizeBytes: Long,
+  val downloadedPrefixSizeBytes: Long,
+  val downloadOffsetBytes: Long,
+  val isDownloadingCompleted: Boolean,
+  val isReadable: Boolean,
+)
 
 /**
  * Identity of an active account session and database generation.
