@@ -121,9 +121,9 @@ class SavedMediaRepository(
         MediaSyncPhase.DISCOVERING_HEAD.name,
         MediaSyncPhase.BACKFILLING.name,
         MediaSyncPhase.CATCHING_UP.name,
-      )
+    )
     val state = if (canResume) {
-      existing!!
+      checkNotNull(existing)
     } else {
       val head = gateway.getSavedMessagesHead(chatId)
       val initial = SyncStateEntity(
@@ -354,7 +354,13 @@ class SavedMediaRepository(
       val snapshot = gateway.getFileSnapshot(cached.tdlibFileId)
       val path = snapshot?.localPath ?: cached.localPath
       val file = path?.let(::File)
-      val readable = snapshot?.isReadable == true && file?.isFile == true && file.canRead()
+      val actualSize = file?.takeIf { it.isFile && it.canRead() }?.length() ?: 0L
+      val stableIdentityMatches = snapshot?.stableFileIdentity == null ||
+        snapshot.stableFileIdentity == cached.stableFileIdentity
+      val completeSizeMatches = snapshot?.let {
+        !it.isDownloadingCompleted || it.expectedSizeBytes <= 0L || actualSize >= it.expectedSizeBytes
+      } == true
+      val readable = snapshot?.isReadable == true && stableIdentityMatches && completeSizeMatches && actualSize > 0L
       if (!readable) {
         database.withTransaction {
           database.cachedFileDao().upsert(
@@ -378,7 +384,7 @@ class SavedMediaRepository(
           cached.copy(
             tdlibFileId = snapshot.fileId,
             localPath = snapshot.localPath,
-            observedSizeBytes = snapshot.expectedSizeBytes.coerceAtLeast(snapshot.downloadedSizeBytes),
+            observedSizeBytes = actualSize,
             observedState = state.name,
             lastAccessedAtEpochMillis = System.currentTimeMillis(),
           ),

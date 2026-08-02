@@ -160,6 +160,36 @@ class TdLibJsonGatewayTest {
         assertEquals(GatewayLifecycle.CLOSED, gateway.state.value.lifecycle)
     }
 
+    @Test fun logoutInvalidatesFileSnapshotsAndBlocksLateUpdates() = runTest {
+        val native = RecordingNative()
+        val identityProvider = AccountSessionIdentityProvider().also { it.initializeFake(7L) }
+        val gateway = TdLibJsonGateway(
+            configuration = TelegramApiConfiguration(1, "configured-placeholder"),
+            native = native,
+            libraryLoader = NativeLibraryLoader {},
+            dispatcher = StandardTestDispatcher(testScheduler),
+            identityProvider = identityProvider,
+        )
+        gateway.start()
+        runCurrent()
+
+        gateway.handleResponseForTest(
+            """{"@type":"updateFile","file":{"id":99,"size":1024,"local":{"path":"/tmp/phase3-partial","downloaded_size":128,"downloaded_prefix_size":128,"is_downloading_completed":false}}}""",
+        )
+        assertEquals(99, gateway.getFileSnapshot(99)?.fileId)
+
+        gateway.handleResponseForTest("""{"@type":"authorizationStateWaitPhoneNumber"}""")
+        assertNull(identityProvider.currentIdentity.value)
+        assertNull(gateway.getFileSnapshot(99))
+
+        gateway.handleResponseForTest(
+            """{"@type":"updateFile","file":{"id":99,"size":1024,"local":{"path":"/tmp/late-partial","downloaded_size":1024,"is_downloading_completed":true}}}""",
+        )
+        assertNull(gateway.getFileSnapshot(99))
+        gateway.close()
+        runCurrent()
+    }
+
     @Test fun authSubmitIsStateGatedDeduplicatedAndErrorIsRedacted() = runTest {
         val native = RecordingNative()
         val gateway = TdLibJsonGateway(

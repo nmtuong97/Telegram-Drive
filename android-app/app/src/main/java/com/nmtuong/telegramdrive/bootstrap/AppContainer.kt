@@ -36,10 +36,12 @@ class AppContainer private constructor(
 ) : Closeable {
   fun start() = telegramRepository.start()
   fun logout(): ActionResult {
+    mediaAccessCoordinator.cancelForAccount()
     savedMediaRepository.clearCurrentAccount()
     return telegramRepository.submit(AuthorizationAction.Logout)
   }
   fun resetAccount(): ActionResult {
+    mediaAccessCoordinator.cancelForAccount()
     savedMediaRepository.clearCurrentAccount()
     return telegramRepository.submit(AuthorizationAction.Reset)
   }

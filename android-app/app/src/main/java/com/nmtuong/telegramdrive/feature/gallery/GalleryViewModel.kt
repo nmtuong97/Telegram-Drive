@@ -13,6 +13,7 @@ import com.nmtuong.telegramdrive.data.SavedMediaSyncResult
 import com.nmtuong.telegramdrive.data.local.SavedMediaEntity
 import com.nmtuong.telegramdrive.data.local.SyncStateEntity
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 
 class GalleryViewModel(
   private val repository: SavedMediaRepository,
@@ -38,7 +40,7 @@ class GalleryViewModel(
   private val _openState = MutableStateFlow<GalleryOpenState>(GalleryOpenState.Idle)
   val openState: StateFlow<GalleryOpenState> = _openState.asStateFlow()
 
-  @OptIn(ExperimentalCoroutinesApi::class)
+  @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
   val pagingData: Flow<PagingData<SavedMediaEntity>> = _query
     .debounce(150)
     .distinctUntilChanged()
@@ -68,7 +70,9 @@ class GalleryViewModel(
 
   fun loadThumbnail(entity: SavedMediaEntity) {
     val key = entity.thumbnailStableFileIdentity ?: return
-    if (_thumbnailPaths.value[key] != null) return
+    val existingPath = _thumbnailPaths.value[key]
+    if (existingPath != null && File(existingPath).isFile && File(existingPath).canRead()) return
+    if (existingPath != null) _thumbnailPaths.update { it - key }
     viewModelScope.launch {
       mediaAccess.ensureThumbnail(entity)?.let { path ->
         _thumbnailPaths.update { it + (key to path) }

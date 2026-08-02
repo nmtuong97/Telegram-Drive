@@ -25,6 +25,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -80,7 +81,11 @@ class MediaAccessCoordinator(
     return try {
       if (entity.mediaType == "VIDEO") return prepareVideo(entity)
       deduplicated(stableIdentity) {
-        val currentPath = entity.localFilePath?.let(::File)
+        val currentSnapshot = gateway.getFileSnapshot(entity.telegramFileId)
+        val currentPath = currentSnapshot
+          ?.takeIf { it.isDownloadingCompleted && it.isReadable }
+          ?.localPath
+          ?.let(::File)
           ?.takeIf { it.isFile && it.canRead() }
           ?.absolutePath
         if (currentPath != null) return@deduplicated currentPath
@@ -228,7 +233,8 @@ class MediaAccessCoordinator(
         tdlibFileId = snapshot.fileId,
         localPath = snapshot.localPath,
         fileType = type.name,
-        observedSizeBytes = snapshot.expectedSizeBytes.coerceAtLeast(snapshot.downloadedSizeBytes),
+        observedSizeBytes = snapshot.localPath?.let(::File)?.takeIf { it.isFile }?.length()
+          ?: snapshot.downloadedSizeBytes,
         lastAccessedAtEpochMillis = System.currentTimeMillis(),
         observedState = state.name,
       ),
@@ -257,6 +263,22 @@ class MediaAccessCoordinator(
     }
   }
 
+  /**
+   * Stops account-scoped media work before logout/reset without destroying the
+   * coordinator itself; the same container may be reused after a new login.
+   */
+  fun cancelForAccount() {
+    scope.coroutineContext.cancelChildren()
+    inFlight.values.forEach { it.cancel() }
+    inFlight.clear()
+    val transfers = synchronized(activeVideoTransfers) {
+      val values = activeVideoTransfers.values.map { it.coordinator }
+      activeVideoTransfers.clear()
+      values
+    }
+    transfers.forEach(VideoStreamingCoordinator::close)
+  }
+
   private suspend fun deduplicated(identity: String, block: suspend () -> String?): String? {
     val deferred = synchronized(inFlight) {
       inFlight[identity] ?: scope.async { block() }.also { inFlight[identity] = it }
@@ -271,14 +293,7 @@ class MediaAccessCoordinator(
   fun cancel(fileId: Int): ActionResult = gateway.cancelFileRange(fileId)
 
   override fun close() {
-    inFlight.values.forEach { it.cancel() }
-    inFlight.clear()
-    val transfers = synchronized(activeVideoTransfers) {
-      val values = activeVideoTransfers.values.map { it.coordinator }
-      activeVideoTransfers.clear()
-      values
-    }
-    transfers.forEach(VideoStreamingCoordinator::close)
+    cancelForAccount()
     scope.cancel()
   }
 

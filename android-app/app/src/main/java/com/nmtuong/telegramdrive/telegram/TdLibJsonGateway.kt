@@ -131,6 +131,8 @@ class TdLibJsonGateway internal constructor(
     private val pendingTransferContexts = ConcurrentHashMap<Int, PendingTransferContext>()
     private val fileSnapshots = ConcurrentHashMap<Int, TdLibFileSnapshot>()
     private val deletedTemporaryFileIds = ConcurrentHashMap.newKeySet<Int>()
+    /** File IDs observed before logout/reset must not be resurrected by late updateFile events. */
+    private val staleFileIds = ConcurrentHashMap.newKeySet<Int>()
     private val attemptSequenceMap = ConcurrentHashMap<Int, AtomicLong>()
     private var resolveIdentityJob: Job? = null
     private val requestSequence = AtomicLong(0)
@@ -325,6 +327,10 @@ class TdLibJsonGateway internal constructor(
         }
         when (mapped) {
             AuthorizationState.WaitingForTdlibParameters -> sendTdlibParametersOrExposeMissingConfig()
+            AuthorizationState.WaitingForPhoneNumber -> {
+                invalidateFileSnapshotState()
+                identityProvider?.clear()
+            }
             AuthorizationState.Ready -> resolveAccountIdentity()
             // authorizationStateClosed — TDLib confirmed full close. Now finalize.
             AuthorizationState.Closed -> finalizeClose()
@@ -340,6 +346,9 @@ class TdLibJsonGateway internal constructor(
                 if (meResponse.string("@type") != "error") {
                     val userId = meResponse.long("id")
                     if (userId != 0L) {
+                        if (identityProvider?.currentIdentity?.value?.accountId?.let { it != userId } == true) {
+                            invalidateFileSnapshotState()
+                        }
                         identityProvider?.updateAccount(userId)
                     }
                 }
@@ -364,6 +373,7 @@ class TdLibJsonGateway internal constructor(
                 instances.updateAndGet { if (it > 0) it - 1 else 0 }
             }
             clientId = null
+            invalidateFileSnapshotState()
             mutableState.value = mutableState.value.copy(
                 clientCreated = false,
                 clientInstanceCount = instances.get()
@@ -1084,7 +1094,7 @@ class TdLibJsonGateway internal constructor(
     private fun observeFileSnapshot(file: JsonObject) {
         val fileId = file.int("id")
         if (fileId == 0) return
-        if (deletedTemporaryFileIds.contains(fileId)) return
+        if (deletedTemporaryFileIds.contains(fileId) || staleFileIds.contains(fileId)) return
         val local = file.obj("local")
         val path = local?.string("path")?.takeIf { it.isNotBlank() }
         val expected = local?.long("expected_size")?.takeIf { it > 0L }
@@ -1109,6 +1119,12 @@ class TdLibJsonGateway internal constructor(
         )
         fileSnapshots[fileId] = snapshot
         mutableFileUpdates.tryEmit(snapshot)
+    }
+
+    private fun invalidateFileSnapshotState() {
+        staleFileIds.addAll(fileSnapshots.keys)
+        fileSnapshots.clear()
+        deletedTemporaryFileIds.clear()
     }
 
     private fun handleFile(file: JsonObject) {
@@ -1220,7 +1236,7 @@ class TdLibJsonGateway internal constructor(
     }
 
     override suspend fun getFileSnapshot(fileId: Int): TdLibFileSnapshot? {
-        if (deletedTemporaryFileIds.contains(fileId)) return null
+        if (deletedTemporaryFileIds.contains(fileId) || staleFileIds.contains(fileId)) return null
         fileSnapshots[fileId]?.let { return it }
         val response = runCatching {
             execute(buildJsonObject {
@@ -1236,6 +1252,7 @@ class TdLibJsonGateway internal constructor(
     override fun requestFileRange(fileId: Int, offsetBytes: Long, limitBytes: Long, priority: Int): ActionResult {
         if (synchronized(lock) { lifecycle } != GatewayLifecycle.RUNNING) return ActionResult.INVALID_STATE
         deletedTemporaryFileIds.remove(fileId)
+        staleFileIds.remove(fileId)
         val request = requestEnvelope("range-$fileId", buildJsonObject {
             put("@type", "downloadFile")
             put("file_id", fileId)
