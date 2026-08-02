@@ -12,11 +12,13 @@ import com.nmtuong.telegramdrive.security.DatabaseKeyException
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 
@@ -154,8 +156,9 @@ class TdLibJsonGateway internal constructor(
     override val library: StateFlow<LibraryState> = mutableLibrary.asStateFlow()
     private val mutableTransferUpdates = kotlinx.coroutines.flow.MutableSharedFlow<TransferUpdate>(extraBufferCapacity = 64)
     override val transferUpdates: kotlinx.coroutines.flow.Flow<TransferUpdate> = mutableTransferUpdates.asSharedFlow()
-    private val mutableSavedMessageUpdates = kotlinx.coroutines.flow.MutableSharedFlow<SavedMessageUpdate>(extraBufferCapacity = 128)
-    override val savedMessageUpdates: kotlinx.coroutines.flow.Flow<SavedMessageUpdate> = mutableSavedMessageUpdates.asSharedFlow()
+    /** TDLib callbacks are synchronous; an unlimited channel prevents message updates from being dropped during bursts. */
+    private val savedMessageUpdateChannel = Channel<SavedMessageUpdate>(Channel.UNLIMITED)
+    override val savedMessageUpdates: kotlinx.coroutines.flow.Flow<SavedMessageUpdate> = savedMessageUpdateChannel.receiveAsFlow()
     private val mutableFileUpdates = kotlinx.coroutines.flow.MutableSharedFlow<TdLibFileSnapshot>(extraBufferCapacity = 128)
     override val fileUpdates: kotlinx.coroutines.flow.Flow<TdLibFileSnapshot> = mutableFileUpdates.asSharedFlow()
 
@@ -266,7 +269,7 @@ class TdLibJsonGateway internal constructor(
 
     private fun handleNewMessage(message: JsonObject) {
         val mapped = MessageMapper.mapMessage(message) ?: return
-        mutableSavedMessageUpdates.tryEmit(SavedMessageUpdate.Upsert(mapped.sourceId, mapped))
+        savedMessageUpdateChannel.trySend(SavedMessageUpdate.Upsert(mapped.sourceId, mapped))
     }
 
     private fun handleMessageChanged(root: JsonObject) {
@@ -282,7 +285,7 @@ class TdLibJsonGateway internal constructor(
                 })
             }.getOrNull() ?: return@launch
             if (response.string("@type") == "error") return@launch
-            mutableSavedMessageUpdates.tryEmit(
+            savedMessageUpdateChannel.trySend(
                 SavedMessageUpdate.Changed(chatId, messageId, MessageMapper.mapMessage(response))
             )
         }
@@ -293,7 +296,7 @@ class TdLibJsonGateway internal constructor(
         if (chatId == 0L) return
         root["message_ids"]?.jsonArray.orEmpty().forEach { element ->
             element.jsonPrimitive.longOrNull?.takeIf { it != 0L }?.let { messageId ->
-                mutableSavedMessageUpdates.tryEmit(SavedMessageUpdate.Deleted(chatId, messageId))
+                savedMessageUpdateChannel.trySend(SavedMessageUpdate.Deleted(chatId, messageId))
             }
         }
     }
@@ -1141,6 +1144,7 @@ class TdLibJsonGateway internal constructor(
     }
 
     private fun invalidateFileSnapshotState() {
+        while (savedMessageUpdateChannel.tryReceive().isSuccess) Unit
         staleFileIds.addAll(fileSnapshots.keys)
         allowedFileIds.clear()
         fileObservationBlocked = true
