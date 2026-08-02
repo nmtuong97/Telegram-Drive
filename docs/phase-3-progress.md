@@ -22,7 +22,8 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 - Previous media-cache/reader hardening commit: `305b309` (`fix(android): harden phase 3 media cache and readers`).
 - Previous implementation commit: `1224709` (`fix(android): add non-destructive media database migration`).
 - Previous update-delivery commit: `995cf5b` (`fix(android): prevent dropped saved message updates`).
-- Latest implementation commit: `ad07249` (`fix(android): add retryable video buffering state`).
+- Previous implementation commit: `ad07249` (`fix(android): add retryable video buffering state`).
+- Latest implementation commit: `f217e53` (`feat(android): add streaming spike diagnostics`).
 
 ## Implemented
 
@@ -58,6 +59,9 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 - Video preview reports buffering state and exposes retry after a Media3/TDLib error;
   retry recreates the player and permits a missing stale partial path to be reconciled
   and requested again by the TDLib data source.
+- The real-streaming path emits account-safe logcat diagnostics tagged
+  `TelegramDrive.Streaming` for range requests, `updateFile` prefix/offset/size state,
+  Media3 reads/seeks, and temporary-file cleanup; no user content or filesystem path is logged.
 - Thumbnail/video deduplication and cleanup are keyed by account identity plus stable
   remote file identity; Paging and sync-state observation rebind on identity changes,
   preventing stale gallery rows or callbacks from crossing account generations.
@@ -101,7 +105,7 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 | --- | --- | --- |
 | `:app:testDebugUnitTest -PtelegramDataSource=fake` | PASS, exit 0 | 131 tests completed, 0 failures/errors/skips; includes saved-message update burst delivery/account-boundary draining, LRU thumbnail eviction, complete-file-size validation, independent shared-reader cursors, and seek supersession without waiting for the timeout. |
 | `:app:lintDebug` | PASS, exit 0 | No lint errors; warnings only. |
-| `:app:assembleDebug -PtelegramDataSource=fake` | PASS, exit 0 | Final APK is 70,146,979 bytes; SHA-256: `ba5f3fac6fe36b84c51aa42fc9428bf229403b05c4a07c2b97a95add5839f22a`. |
+| `:app:assembleDebug -PtelegramDataSource=fake` | PASS, exit 0 | Final APK is 70,146,979 bytes; SHA-256: `b7ed93ea191e6f7ca38baece46d269f77e2f5d70f74da52cb5a9ab6ebe6f8673`. |
 | `:app:assembleDebug` (real default) | PASS, exit 0 | Current source also assembles real APK; launch stopped at Telegram sign-in and requires user credentials/OTP/2FA. |
 | `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | PASS, exit 0 | 13 tests on `TelegramDrive_Small` API 36, 0 failures/errors/skips, including Room 1→2 migration, account-scoped Paging rebinding, repository crash-resume/update, and shared-video release tests. |
 | Fake runtime | PASS for fake scope | Current Room-backed gallery is captured in [`phase-3-current-gallery.png`](evidence/phase-3-current-gallery.png) with hierarchy in [`phase-3-current-gallery-layout.json`](evidence/phase-3-current-gallery-layout.json); fake Media3 video preview is captured in [`phase-3-current-video.png`](evidence/phase-3-current-video.png). Resumed fake APK sign-in state is captured in [`phase-3-resumed-runtime.png`](evidence/phase-3-resumed-runtime.png) with hierarchy in [`phase-3-resumed-runtime-layout.json`](evidence/phase-3-resumed-runtime-layout.json). Earlier image-viewer evidence remains valid. These are not real-TDLib progressive-streaming evidence. |

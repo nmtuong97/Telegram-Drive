@@ -22,6 +22,18 @@ prefix or a requested `downloadOffset` range, and releases Media3/TDLib temporar
 state on the last player close. It does not use HLS, DASH, adaptive bitrate, or a
 full-download fallback to satisfy Phase 3.
 
+The real-device diagnostic tag is `TelegramDrive.Streaming`. It records only file
+identity/range/size/state values and player lifecycle events, never message content,
+phone numbers, or filesystem paths. For an authorized run, capture it with:
+
+```sh
+adb logcat -c
+adb logcat -v threadtime -s TelegramDrive.Streaming:I '*:S' > phase-3-real-streaming-log.txt
+```
+
+No real-account log has been captured yet; this instrumentation is preparation for the
+required user-authorized run, not evidence that the run passed.
+
 ## What is locally proven
 
 - `VideoStreamingCoordinatorTest` uses a 2 MiB fake file, requests a 4 KiB initial

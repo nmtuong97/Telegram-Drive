@@ -23,7 +23,8 @@ real-account gate. A file is not described as passing unless it was actually pro
 | Previous media-cache/reader hardening commit | `305b309` (`fix(android): harden phase 3 media cache and readers`). |
 | Previous implementation commit | `1224709` (`fix(android): add non-destructive media database migration`). |
 | Previous update-delivery commit | `995cf5b` (`fix(android): prevent dropped saved message updates`). |
-| Latest implementation commit | `ad07249` (`fix(android): add retryable video buffering state`). |
+| Previous implementation commit | `ad07249` (`fix(android): add retryable video buffering state`). |
+| Latest implementation commit | `f217e53` (`feat(android): add streaming spike diagnostics`). |
 
 ## Commands and exit codes
 
@@ -76,6 +77,9 @@ Device: `TelegramDrive_Small` AVD, serial `emulator-5554`, API 36.
 - Range coordinator and Media3 data source: `data/video/`.
 - Video preview: `feature/preview/VideoPreviewScreen.kt` reports buffering and retries
   after Media3/TDLib errors, including when a prior partial path was cleaned up.
+- Real-account streaming diagnostics use logcat tag `TelegramDrive.Streaming` for
+  `downloadFile` range requests, `updateFile` prefix/offset/size snapshots, reads,
+  seeks, cancellation, and temporary cleanup. No real-account log capture is claimed yet.
 - Thumbnail/original/cache coordinator: `data/MediaAccessCoordinator.kt`.
 - Gallery UI/ViewModel: `feature/gallery/`.
 - Backup exclusions: `app/src/main/res/xml/backup_rules.xml` and `data_extraction_rules.xml`.
@@ -116,4 +120,4 @@ entry. The scope is not silently downgraded to full-download playback.
 
 - Expected final path: `android-app/app/build/outputs/apk/debug/app-debug.apk`.
 - Final fake APK size: `70,146,979` bytes.
-- Final SHA-256: `ba5f3fac6fe36b84c51aa42fc9428bf229403b05c4a07c2b97a95add5839f22a`.
+- Final SHA-256: `b7ed93ea191e6f7ca38baece46d269f77e2f5d70f74da52cb5a9ab6ebe6f8673`.
