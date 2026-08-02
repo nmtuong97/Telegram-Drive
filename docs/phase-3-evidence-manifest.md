@@ -40,14 +40,14 @@ processes; a stale daemon was terminated and no test worker remained.
 
 ## Android CLI/device evidence
 
-Device: `Pixel_9_Pro` AVD, serial `emulator-5554`, API 36.
+Device: `TelegramDrive_Small` AVD, serial `emulator-5554`, API 36.
 
 - `android docs search "Room Paging Compose"` completed.
 - `android docs fetch "kb://android/topic/libraries/architecture/paging/v3-overview"` completed.
 - `android emulator list` and `adb devices` confirmed the emulator.
 - `android run --apks=<debug APK> --device=emulator-5554 --activity=com.nmtuong.telegramdrive.MainActivity` installed and launched the fake APK.
-- `android layout --pretty --output=docs/evidence/phase-3-final-fake-layout.json` captured the final fake hierarchy.
-- `android screen capture --output=docs/evidence/phase-3-final-fake.png` captured the final fake preflight.
+- `android layout --pretty --output=docs/evidence/phase-3-final-layout.json` captured the current fake hierarchy.
+- `android screen capture --output=docs/evidence/phase-3-final-runtime.png --annotate` captured the current fake preflight.
 - Current fake-device preflight hierarchy and screenshot are [`phase-3-final-layout.json`](evidence/phase-3-final-layout.json) and [`phase-3-final-runtime.png`](evidence/phase-3-final-runtime.png). The captured screen is sign-in because no fake session was seeded; authenticated gallery/video flows remain covered by connected tests and earlier fake gallery/video captures.
 - Resumed fake-device sign-in hierarchy and screenshot are [`phase-3-resumed-runtime-layout.json`](evidence/phase-3-resumed-runtime-layout.json) and [`phase-3-resumed-runtime.png`](evidence/phase-3-resumed-runtime.png); no Telegram credentials were entered.
 - Latest fake-device Media3 video preview is [`phase-3-current-video.png`](evidence/phase-3-current-video.png).
