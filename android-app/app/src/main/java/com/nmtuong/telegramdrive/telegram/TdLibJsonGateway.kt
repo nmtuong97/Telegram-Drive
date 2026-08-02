@@ -1,6 +1,7 @@
 package com.nmtuong.telegramdrive.telegram
 
 import android.content.Context
+import android.util.Log
 import com.nmtuong.telegramdrive.data.AccountSessionIdentityProvider
 import com.nmtuong.telegramdrive.domain.*
 
@@ -12,11 +13,13 @@ import com.nmtuong.telegramdrive.security.DatabaseKeyException
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 
@@ -33,6 +36,7 @@ private const val CLOSE_TIMEOUT_MS = 20_000L
 private const val LOGOUT_TIMEOUT_MS = 30_000L
 private const val AUTH_ACTION_TIMEOUT_MS = 15_000L
 private const val MAX_PARAMETER_ATTEMPTS = 2
+private const val STREAMING_LOG_TAG = "TelegramDrive.Streaming"
 
 /**
  * Safety limit for filtered empty page scanning.
@@ -73,6 +77,14 @@ private fun safeNetworkMessage(message: String): String {
     if (isNetworkFailure(message)) return "Network unavailable. Check your connection and retry."
     return SensitiveDataRedactor.redact(message).takeIf { it.isNotBlank() }
         ?: "Telegram request failed"
+}
+
+private fun streamingLog(message: String) {
+    // Structured, account-safe diagnostics for the real-account streaming spike.
+    // Do not include Telegram message text, captions, phone numbers, or file paths.
+    // Local JVM tests use the Android stub, where Log methods may throw; diagnostics
+    // must never affect transfer behavior or test termination.
+    runCatching { Log.i(STREAMING_LOG_TAG, message) }
 }
 
 private data class PendingTransferContext(
@@ -129,6 +141,13 @@ class TdLibJsonGateway internal constructor(
     private val pendingDownloadRequests = mutableMapOf<Int, String>()
     private val pendingCancelRequests = mutableMapOf<Int, String>()
     private val pendingTransferContexts = ConcurrentHashMap<Int, PendingTransferContext>()
+    private val fileSnapshots = ConcurrentHashMap<Int, TdLibFileSnapshot>()
+    private val deletedTemporaryFileIds = ConcurrentHashMap.newKeySet<Int>()
+    /** File IDs observed before logout/reset must not be resurrected by late updateFile events. */
+    private val staleFileIds = ConcurrentHashMap.newKeySet<Int>()
+    /** After an account boundary, only an explicit request may re-enable a file ID. */
+    private val allowedFileIds = ConcurrentHashMap.newKeySet<Int>()
+    @Volatile private var fileObservationBlocked = false
     private val attemptSequenceMap = ConcurrentHashMap<Int, AtomicLong>()
     private var resolveIdentityJob: Job? = null
     private val requestSequence = AtomicLong(0)
@@ -147,6 +166,11 @@ class TdLibJsonGateway internal constructor(
     override val library: StateFlow<LibraryState> = mutableLibrary.asStateFlow()
     private val mutableTransferUpdates = kotlinx.coroutines.flow.MutableSharedFlow<TransferUpdate>(extraBufferCapacity = 64)
     override val transferUpdates: kotlinx.coroutines.flow.Flow<TransferUpdate> = mutableTransferUpdates.asSharedFlow()
+    /** TDLib callbacks are synchronous; an unlimited channel prevents message updates from being dropped during bursts. */
+    private val savedMessageUpdateChannel = Channel<SavedMessageUpdate>(Channel.UNLIMITED)
+    override val savedMessageUpdates: kotlinx.coroutines.flow.Flow<SavedMessageUpdate> = savedMessageUpdateChannel.receiveAsFlow()
+    private val mutableFileUpdates = kotlinx.coroutines.flow.MutableSharedFlow<TdLibFileSnapshot>(extraBufferCapacity = 128)
+    override val fileUpdates: kotlinx.coroutines.flow.Flow<TdLibFileSnapshot> = mutableFileUpdates.asSharedFlow()
 
     override fun start() {
         synchronized(lock) {
@@ -230,9 +254,16 @@ class TdLibJsonGateway internal constructor(
             "authorizationStateWaitRegistration", "authorizationStateWaitPremiumPurchase",
             "authorizationStateReady", "authorizationStateLoggingOut", "authorizationStateClosing",
             "authorizationStateClosed" -> handleAuthorization(root)
-            "updateFile" -> root.obj("file")?.let(::handleFile)
+            "updateFile" -> root.obj("file")?.let { file ->
+                observeFileSnapshot(file)
+                handleFile(file)
+            }
+            "updateNewMessage" -> root.obj("message")?.let(::handleNewMessage)
+            "updateMessageContent", "updateMessageEdited" -> handleMessageChanged(root)
+            "updateDeleteMessages" -> handleDeletedMessages(root)
             "file" -> {
                 val fileId = root.int("id")
+                observeFileSnapshot(root)
                 if (synchronized(lock) { pendingDownloadRequests[fileId] == root.string("@extra") }) handleFile(root)
             }
             "user" -> if (synchronized(lock) { pendingLibraryRequest == root.string("@extra") }) requestPrivateChat(root.long("id"))
@@ -243,6 +274,40 @@ class TdLibJsonGateway internal constructor(
             }
             "ok" -> handleOk(root)
             "error" -> handleError(root)
+        }
+    }
+
+    private fun handleNewMessage(message: JsonObject) {
+        val mapped = MessageMapper.mapMessage(message) ?: return
+        savedMessageUpdateChannel.trySend(SavedMessageUpdate.Upsert(mapped.sourceId, mapped))
+    }
+
+    private fun handleMessageChanged(root: JsonObject) {
+        val chatId = root.long("chat_id")
+        val messageId = root.long("message_id")
+        if (chatId == 0L || messageId == 0L) return
+        scope.launch {
+            val response = runCatching {
+                execute(buildJsonObject {
+                    put("@type", "getMessage")
+                    put("chat_id", chatId)
+                    put("message_id", messageId)
+                })
+            }.getOrNull() ?: return@launch
+            if (response.string("@type") == "error") return@launch
+            savedMessageUpdateChannel.trySend(
+                SavedMessageUpdate.Changed(chatId, messageId, MessageMapper.mapMessage(response))
+            )
+        }
+    }
+
+    private fun handleDeletedMessages(root: JsonObject) {
+        val chatId = root.long("chat_id")
+        if (chatId == 0L) return
+        root["message_ids"]?.jsonArray.orEmpty().forEach { element ->
+            element.jsonPrimitive.longOrNull?.takeIf { it != 0L }?.let { messageId ->
+                savedMessageUpdateChannel.trySend(SavedMessageUpdate.Deleted(chatId, messageId))
+            }
         }
     }
 
@@ -278,6 +343,10 @@ class TdLibJsonGateway internal constructor(
         }
         when (mapped) {
             AuthorizationState.WaitingForTdlibParameters -> sendTdlibParametersOrExposeMissingConfig()
+            AuthorizationState.WaitingForPhoneNumber -> {
+                invalidateFileSnapshotState()
+                identityProvider?.clear()
+            }
             AuthorizationState.Ready -> resolveAccountIdentity()
             // authorizationStateClosed — TDLib confirmed full close. Now finalize.
             AuthorizationState.Closed -> finalizeClose()
@@ -293,6 +362,9 @@ class TdLibJsonGateway internal constructor(
                 if (meResponse.string("@type") != "error") {
                     val userId = meResponse.long("id")
                     if (userId != 0L) {
+                        if (identityProvider?.currentIdentity?.value?.accountId?.let { it != userId } == true) {
+                            invalidateFileSnapshotState()
+                        }
                         identityProvider?.updateAccount(userId)
                     }
                 }
@@ -317,6 +389,7 @@ class TdLibJsonGateway internal constructor(
                 instances.updateAndGet { if (it > 0) it - 1 else 0 }
             }
             clientId = null
+            invalidateFileSnapshotState()
             mutableState.value = mutableState.value.copy(
                 clientCreated = false,
                 clientInstanceCount = instances.get()
@@ -906,8 +979,16 @@ class TdLibJsonGateway internal constructor(
 
     internal fun handleResponseForTest(raw: String) = handleResponse(raw)
 
+    internal fun cachedFileSnapshotForTest(fileId: Int): TdLibFileSnapshot? = fileSnapshots[fileId]
+
     override fun download(request: TransferRequest): ActionResult {
         val fileId = request.fileId
+        val activeIdentity = identityProvider?.currentIdentity?.value
+        if (activeIdentity != null && (
+                activeIdentity.accountId != request.identity.accountId ||
+                    activeIdentity.databaseGeneration != request.identity.databaseGeneration
+                )
+        ) return ActionResult.INVALID_STATE
         if (mutableResetProgress.value != ResetProgress.Idle) {
             mutableTransferUpdates.tryEmit(
                 TransferUpdate(
@@ -967,6 +1048,9 @@ class TdLibJsonGateway internal constructor(
             pendingTransferContexts[fileId] = context
             pendingDownloads.add(fileId)
             pendingDownloadRequests[fileId] = extra
+            deletedTemporaryFileIds.remove(fileId)
+            staleFileIds.remove(fileId)
+            allowedFileIds.add(fileId)
             envelope
         }
 
@@ -1032,6 +1116,58 @@ class TdLibJsonGateway internal constructor(
     override fun cancelDownload(fileId: Int): ActionResult {
         val identity = TransferIdentity(currentAccountId(), currentDatabaseGeneration(), fileId)
         return cancel(identity)
+    }
+
+    private fun observeFileSnapshot(file: JsonObject) {
+        val fileId = file.int("id")
+        if (fileId == 0) return
+        if (deletedTemporaryFileIds.contains(fileId) || staleFileIds.contains(fileId)) return
+        if (fileObservationBlocked && !allowedFileIds.contains(fileId)) return
+        val local = file.obj("local")
+        val path = local?.string("path")?.takeIf { it.isNotBlank() }
+        val expected = local?.long("expected_size")?.takeIf { it > 0L }
+            ?: file.long("expected_size").takeIf { it > 0L }
+            ?: file.long("size")
+        val downloaded = local?.long("downloaded_size") ?: 0L
+        // A zero downloaded_prefix_size is meaningful: TDLib may have a
+        // downloaded range at a non-zero offset while byte zero is absent.
+        // Falling back to downloaded_size would make a seek range look like a
+        // contiguous prefix and could expose sparse/unavailable bytes to Media3.
+        val prefix = local?.long("downloaded_prefix_size") ?: 0L
+        val offset = local?.long("download_offset") ?: 0L
+        val complete = local?.bool("is_downloading_completed") == true
+        val remoteIdentity = file.obj("remote")?.string("unique_id")?.takeIf { it.isNotBlank() }
+            ?: file.obj("remote")?.string("id")?.takeIf { it.isNotBlank() }
+            ?: "unknown"
+        val localBytes = path?.let { File(it).length() } ?: 0L
+        val snapshot = TdLibFileSnapshot(
+            fileId = fileId,
+            stableFileIdentity = file.obj("remote")?.string("unique_id")?.takeIf { it.isNotBlank() }
+                ?.let { "remote-unique:$it" }
+                ?: file.obj("remote")?.string("id")?.takeIf { it.isNotBlank() }?.let { "remote:$it" },
+            localPath = path,
+            expectedSizeBytes = expected,
+            downloadedSizeBytes = downloaded,
+            downloadedPrefixSizeBytes = prefix,
+            downloadOffsetBytes = offset,
+            isDownloadingCompleted = complete,
+            isReadable = path != null && File(path).isFile && (complete || downloaded > 0L),
+        )
+        fileSnapshots[fileId] = snapshot
+        streamingLog(
+            "updateFile fileId=$fileId remote=$remoteIdentity expected=$expected downloaded=$downloaded " +
+                "prefix=$prefix offset=$offset complete=$complete localBytes=$localBytes readable=${snapshot.isReadable}",
+        )
+        mutableFileUpdates.tryEmit(snapshot)
+    }
+
+    private fun invalidateFileSnapshotState() {
+        while (savedMessageUpdateChannel.tryReceive().isSuccess) Unit
+        staleFileIds.addAll(fileSnapshots.keys)
+        allowedFileIds.clear()
+        fileObservationBlocked = true
+        fileSnapshots.clear()
+        deletedTemporaryFileIds.clear()
     }
 
     private fun handleFile(file: JsonObject) {
@@ -1127,6 +1263,82 @@ class TdLibJsonGateway internal constructor(
         if (chatResponse.string("@type") == "error") return null
         val chatId = chatResponse.long("id")
         return if (chatId == 0L) null else chatId
+    }
+
+    override suspend fun getSavedMessagesHead(chatId: Long): Long? {
+        val response = execute(buildJsonObject {
+            put("@type", "getChatHistory")
+            put("chat_id", chatId)
+            put("from_message_id", 0L)
+            put("offset", 0)
+            put("limit", 1)
+            put("only_local", false)
+        })
+        if (response.string("@type") == "error") return null
+        return response["messages"]?.jsonArray?.firstOrNull()?.jsonObject?.long("id")?.takeIf { it != 0L }
+    }
+
+    override suspend fun getFileSnapshot(fileId: Int): TdLibFileSnapshot? {
+        if (deletedTemporaryFileIds.contains(fileId) || staleFileIds.contains(fileId)) return null
+        allowedFileIds.add(fileId)
+        fileSnapshots[fileId]?.let { return it }
+        val response = runCatching {
+            execute(buildJsonObject {
+                put("@type", "getFile")
+                put("file_id", fileId)
+            })
+        }.getOrNull() ?: return null
+        if (response.string("@type") == "error") return null
+        observeFileSnapshot(response)
+        return fileSnapshots[fileId]
+    }
+
+    override fun requestFileRange(fileId: Int, offsetBytes: Long, limitBytes: Long, priority: Int): ActionResult {
+        if (synchronized(lock) { lifecycle } != GatewayLifecycle.RUNNING) return ActionResult.INVALID_STATE
+        deletedTemporaryFileIds.remove(fileId)
+        staleFileIds.remove(fileId)
+        allowedFileIds.add(fileId)
+        val request = requestEnvelope("range-$fileId", buildJsonObject {
+            put("@type", "downloadFile")
+            put("file_id", fileId)
+            put("priority", priority.coerceIn(1, 32))
+            put("offset", offsetBytes.coerceAtLeast(0L))
+            put("limit", limitBytes.coerceAtLeast(0L))
+            put("synchronous", false)
+        })
+        val accepted = sendOrFail(request)
+        streamingLog(
+            "downloadFile range fileId=$fileId offset=${offsetBytes.coerceAtLeast(0L)} " +
+                "limit=${limitBytes.coerceAtLeast(0L)} priority=${priority.coerceIn(1, 32)} accepted=$accepted",
+        )
+        return if (accepted) ActionResult.ACCEPTED else ActionResult.INVALID_STATE
+    }
+
+    override fun cancelFileRange(fileId: Int): ActionResult {
+        if (synchronized(lock) { lifecycle } != GatewayLifecycle.RUNNING) return ActionResult.INVALID_STATE
+        val request = requestEnvelope("range-cancel-$fileId", buildJsonObject {
+            put("@type", "cancelDownloadFile")
+            put("file_id", fileId)
+            put("only_if_pending", false)
+        })
+        val accepted = sendOrFail(request)
+        streamingLog("cancelDownloadFile range fileId=$fileId accepted=$accepted")
+        return if (accepted) ActionResult.ACCEPTED else ActionResult.INVALID_STATE
+    }
+
+    override fun deleteTemporaryFile(fileId: Int): ActionResult {
+        if (synchronized(lock) { lifecycle } != GatewayLifecycle.RUNNING) return ActionResult.INVALID_STATE
+        deletedTemporaryFileIds.add(fileId)
+        allowedFileIds.remove(fileId)
+        staleFileIds.add(fileId)
+        fileSnapshots.remove(fileId)
+        val request = requestEnvelope("delete-file-$fileId", buildJsonObject {
+            put("@type", "deleteFile")
+            put("file_id", fileId)
+        })
+        val accepted = sendOrFail(request)
+        streamingLog("deleteFile temporary fileId=$fileId accepted=$accepted")
+        return if (accepted) ActionResult.ACCEPTED else ActionResult.INVALID_STATE
     }
 
     override suspend fun getAvailableSources(): List<FileSource> {

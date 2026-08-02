@@ -1,0 +1,263 @@
+[
+  {
+    "text": "Saved Messages",
+    "center": "[319,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "text": "Source",
+    "center": "[109,408]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[640,540]",
+    "bounds": "[48,468][1232,612]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[640,1692]",
+    "bounds": "[48,648][1232,2736]",
+    "key": 3506402
+  },
+  {
+    "text": "Log out",
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "state": [
+      "checked"
+    ],
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[683,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1087,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Saved Messages",
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Matchic Coder",
+    "center": "[683,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Matchic Notifier",
+    "center": "[1087,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Korean_Air_Kim_Ji-hye (1).mp4",
+    "center": "[569,720]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[268,789]",
+    "key": 3506402
+  },
+  {
+    "text": "446.9 MB",
+    "center": "[419,789]",
+    "key": 3506402
+  },
+  {
+    "text": "2026-08-02",
+    "center": "[318,846]",
+    "key": 3506402
+  },
+  {
+    "text": "Remote",
+    "center": "[284,903]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,1017]",
+    "key": 3506402
+  },
+  {
+    "text": "Kim_x_Yeon_(5).mp4",
+    "center": "[453,1221]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[268,1290]",
+    "key": 3506402
+  },
+  {
+    "text": "22.0 MB",
+    "center": "[408,1290]",
+    "key": 3506402
+  },
+  {
+    "text": "2026-08-02",
+    "center": "[318,1347]",
+    "key": 3506402
+  },
+  {
+    "text": "Remote",
+    "center": "[284,1404]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,1518]",
+    "key": 3506402
+  },
+  {
+    "text": "Kim_x_Yeon_(4).mp4",
+    "center": "[453,1722]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[268,1791]",
+    "key": 3506402
+  },
+  {
+    "text": "36.2 MB",
+    "center": "[408,1791]",
+    "key": 3506402
+  },
+  {
+    "text": "2026-08-02",
+    "center": "[318,1848]",
+    "key": 3506402
+  },
+  {
+    "text": "Remote",
+    "center": "[284,1905]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,2019]",
+    "key": 3506402
+  },
+  {
+    "text": "Kim_x_Yeon_(2).mp4",
+    "center": "[453,2223]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[268,2292]",
+    "key": 3506402
+  },
+  {
+    "text": "73.7 MB",
+    "center": "[408,2292]",
+    "key": 3506402
+  },
+  {
+    "text": "2026-08-02",
+    "center": "[318,2349]",
+    "key": 3506402
+  },
+  {
+    "text": "Remote",
+    "center": "[284,2406]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,2520]",
+    "key": 3506402
+  },
+  {
+    "text": "Kim_X_Kyung_93.mp4",
+    "center": "[466,2712]",
+    "key": 3506402
+  },
+  {
+    "text": "V",
+    "center": "[138,806]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,1017]",
+    "key": 3506402
+  },
+  {
+    "text": "V",
+    "center": "[138,1307]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,1518]",
+    "key": 3506402
+  },
+  {
+    "text": "V",
+    "center": "[138,1808]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,2019]",
+    "key": 3506402
+  },
+  {
+    "text": "V",
+    "center": "[138,2309]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,2520]",
+    "key": 3506402
+  }
+]

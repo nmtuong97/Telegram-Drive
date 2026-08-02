@@ -1,0 +1,96 @@
+[
+  {
+    "text": "Matchic Notifier",
+    "center": "[305,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "text": "Source",
+    "center": "[109,408]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[640,540]",
+    "bounds": "[48,468][1232,612]",
+    "key": 3506402
+  },
+  {
+    "text": "No supported recent media",
+    "center": "[640,1608]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[641,1740]",
+    "key": 3506402
+  },
+  {
+    "text": "Log out",
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[683,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "state": [
+      "checked"
+    ],
+    "center": "[1087,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Refresh",
+    "center": "[641,1740]",
+    "key": 3506402
+  },
+  {
+    "text": "Saved Messages",
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Matchic Coder",
+    "center": "[683,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Matchic Notifier",
+    "center": "[1087,540]",
+    "key": 3506402
+  }
+]

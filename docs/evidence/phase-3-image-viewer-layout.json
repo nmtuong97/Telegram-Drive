@@ -1,0 +1,216 @@
+[
+  {
+    "text": "Saved Media",
+    "center": "[254,96]",
+    "key": 3506402
+  },
+  {
+    "text": "completed",
+    "center": "[139,168]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1117,120]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable",
+      "long-clickable"
+    ],
+    "center": "[640,318]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "state": [
+      "checked"
+    ],
+    "center": "[122,516]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[340,516]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[599,516]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[839,516]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[201,690]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1145,690]",
+    "key": 3506402
+  },
+  {
+    "text": "Preparing media…",
+    "center": "[201,816]",
+    "key": 3506402
+  },
+  {
+    "text": "Sources",
+    "center": "[1117,120]",
+    "key": 3506402
+  },
+  {
+    "text": "Search filename or caption",
+    "center": "[401,330]",
+    "key": 3506402
+  },
+  {
+    "text": "All",
+    "center": "[122,516]",
+    "key": 3506402
+  },
+  {
+    "text": "Images",
+    "center": "[340,516]",
+    "key": 3506402
+  },
+  {
+    "text": "Videos",
+    "center": "[599,516]",
+    "key": 3506402
+  },
+  {
+    "text": "Local",
+    "center": "[839,516]",
+    "key": 3506402
+  },
+  {
+    "text": "Newest first",
+    "center": "[201,690]",
+    "key": 3506402
+  },
+  {
+    "text": "Sync",
+    "center": "[1145,690]",
+    "key": 3506402
+  },
+  {
+    "text": "Unknown date",
+    "center": "[184,900]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[640,1164]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[338,1656]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[942,1632]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[338,2172]",
+    "key": 3506402
+  },
+  {
+    "text": "mountain.jpg",
+    "center": "[640,1344]",
+    "key": 3506402
+  },
+  {
+    "text": "demo.mp4",
+    "center": "[338,1812]",
+    "key": 3506402
+  },
+  {
+    "text": "0s",
+    "center": "[338,1860]",
+    "key": 3506402
+  },
+  {
+    "text": "mountain-duplicate.jpg",
+    "center": "[942,1812]",
+    "key": 3506402
+  },
+  {
+    "text": "trailer.mp4",
+    "center": "[338,2328]",
+    "key": 3506402
+  },
+  {
+    "text": "0s",
+    "center": "[338,2376]",
+    "key": 3506402
+  },
+  {
+    "text": "Image",
+    "center": "[640,1140]",
+    "key": 3506402
+  },
+  {
+    "text": "▶",
+    "center": "[338,1608]",
+    "key": 3506402
+  },
+  {
+    "text": "Image",
+    "center": "[942,1608]",
+    "key": 3506402
+  },
+  {
+    "text": "▶",
+    "center": "[338,2124]",
+    "key": 3506402
+  }
+]

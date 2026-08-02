@@ -1,0 +1,239 @@
+[
+  {
+    "text": "Saved Messages",
+    "center": "[319,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "text": "Source",
+    "center": "[109,408]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[640,540]",
+    "bounds": "[48,468][1232,612]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[640,1692]",
+    "bounds": "[48,648][1232,2736]",
+    "key": 3506402
+  },
+  {
+    "text": "Log out",
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "state": [
+      "checked"
+    ],
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[683,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1087,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Saved Messages",
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Matchic Coder",
+    "center": "[683,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Matchic Notifier",
+    "center": "[1087,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,705]",
+    "key": 3506402
+  },
+  {
+    "text": "Jo_Hee-min-97-Joint.mp4",
+    "center": "[373,909]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,987]",
+    "key": 3506402
+  },
+  {
+    "text": "897.1 MB",
+    "center": "[1115,987]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,1101]",
+    "key": 3506402
+  },
+  {
+    "text": "Jo Yura.mp4",
+    "center": "[224,1305]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,1383]",
+    "key": 3506402
+  },
+  {
+    "text": "523.2 MB",
+    "center": "[1115,1383]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,1497]",
+    "key": 3506402
+  },
+  {
+    "text": "Jiu-Jitsu.mp4",
+    "center": "[237,1701]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,1779]",
+    "key": 3506402
+  },
+  {
+    "text": "189.3 MB",
+    "center": "[1115,1779]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,1893]",
+    "key": 3506402
+  },
+  {
+    "text": "Jin_Hye-won_a_female_doctor_at_a_beauty_hospital.mp4",
+    "center": "[640,2133]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,2247]",
+    "key": 3506402
+  },
+  {
+    "text": "203.8 MB",
+    "center": "[1115,2247]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,2361]",
+    "key": 3506402
+  },
+  {
+    "text": "Jihye_Park_Heart_Tattoo_Hotelier_4.mp4",
+    "center": "[540,2565]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,2643]",
+    "key": 3506402
+  },
+  {
+    "text": "101.8 MB",
+    "center": "[1115,2643]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,2746]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,705]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,1101]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,1497]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,1893]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,2361]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,2731]",
+    "key": 3506402
+  }
+]

@@ -1,0 +1,49 @@
+[
+  {
+    "text": "Telegram sign in",
+    "center": "[331,173]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable",
+      "long-clickable"
+    ],
+    "state": [
+      "focused"
+    ],
+    "center": "[540,347]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable"
+    ],
+    "center": "[199,537]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[540,705]",
+    "key": 3506402
+  },
+  {
+    "text": "Phone number",
+    "center": "[212,284]",
+    "key": 3506402
+  },
+  {
+    "text": "Continue",
+    "center": "[199,536]",
+    "key": 3506402
+  },
+  {
+    "text": "Use another device",
+    "center": "[540,704]",
+    "key": 3506402
+  }
+]

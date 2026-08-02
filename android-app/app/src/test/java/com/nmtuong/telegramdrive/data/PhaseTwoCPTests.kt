@@ -72,6 +72,15 @@ class PhaseTwoCPTests {
     }
 
     @Test
+    fun `CP7 - logout advances generation before same account can log in again`() {
+        val provider = AccountSessionIdentityProvider()
+        provider.initializeFake(accountId = 1L, generation = 4L)
+        provider.clear()
+        provider.updateAccount(accountId = 1L)
+        assertEquals(5L, provider.databaseGeneration)
+    }
+
+    @Test
     fun `CP7 - FakeTelegramRepository uses provider account ID`() {
         val provider = AccountSessionIdentityProvider()
         provider.initializeFake(accountId = catalog.account.id)
@@ -168,4 +177,3 @@ class PhaseTwoCPTests {
 
 // Keep alias for compatibility with test runners expecting PhaseTwo_CP_Tests
 typealias PhaseTwo_CP_Tests = PhaseTwoCPTests
-

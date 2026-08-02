@@ -1,0 +1,20 @@
+[
+  {
+    "text": "Saved Messages",
+    "center": "[319,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "text": "Log out",
+    "center": "[1123,276]",
+    "key": 3506402
+  }
+]

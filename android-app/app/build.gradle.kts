@@ -4,6 +4,12 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
+  alias(libs.plugins.ksp)
+}
+
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
+  arg("room.incremental", "true")
 }
 
 val telegramDataSource = providers.gradleProperty("telegramDataSource").orElse("real")
@@ -89,6 +95,10 @@ dependencies {
   implementation(libs.androidx.media3.ui)
   implementation(libs.androidx.paging.runtime)
   implementation(libs.androidx.paging.compose)
+  implementation(libs.androidx.room.runtime)
+  implementation(libs.androidx.room.ktx)
+  implementation(libs.androidx.room.paging)
+  ksp(libs.androidx.room.compiler)
 
   // Compose
   implementation(libs.androidx.compose.ui)
@@ -103,6 +113,7 @@ dependencies {
   // Local tests: jUnit, coroutines, Android runner
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
+  testImplementation(libs.androidx.room.testing)
 
   // Instrumented tests: jUnit rules and runners
   androidTestImplementation(libs.androidx.test.core)

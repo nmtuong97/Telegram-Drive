@@ -132,9 +132,15 @@ class TdLibJsonGatewayTest {
             dispatcher = StandardTestDispatcher(testScheduler),
             identityProvider = identityProvider,
         )
+        try {
         gateway.start()
         runCurrent()
         gateway.handleResponseForTest("""{"@type":"authorizationStateReady"}""")
+        runCurrent()
+        val identityExtra = requestExtra(native.requests.last())
+        gateway.handleResponseForTest("""{"@type":"user","@extra":"$identityExtra","id":7}""")
+        runCurrent()
+        assertEquals(7L, identityProvider.accountId)
         assertEquals(ActionResult.ACCEPTED, gateway.loadSavedMessages(50))
         val getMeExtra = requestExtra(native.requests.last())
         gateway.handleResponseForTest("""{"@type":"user","@extra":"$getMeExtra","id":7}""")
@@ -142,6 +148,7 @@ class TdLibJsonGatewayTest {
         gateway.handleResponseForTest(
             """{"@type":"messages","@extra":"$historyExtra","messages":[{"id":42,"chat_id":7,"content":{"@type":"messagePhoto","photo":{"sizes":[{"photo":{"id":99,"size":123,"local":{"path":"","is_downloading_completed":false}}}]}}}]}""",
         )
+        assertEquals(GatewayLifecycle.RUNNING, gateway.state.value.lifecycle)
         assertEquals(ActionResult.ACCEPTED, gateway.download(99))
         assertEquals(ActionResult.ACCEPTED, gateway.cancelDownload(99))
         val cancelExtra = requestExtra(native.requests.last())
@@ -155,9 +162,92 @@ class TdLibJsonGatewayTest {
         assertEquals(ActionResult.ACCEPTED, gateway.download(99))
         gateway.close()
         runCurrent()
-        advanceTimeBy(1)
+        assertEquals(1, native.closeRequests)
+        gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
         runCurrent()
         assertEquals(GatewayLifecycle.CLOSED, gateway.state.value.lifecycle)
+        } finally {
+            gateway.close()
+            gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
+            runCurrent()
+        }
+    }
+
+    @Test fun logoutInvalidatesFileSnapshotsAndBlocksLateUpdates() = runTest {
+        val native = RecordingNative()
+        val identityProvider = AccountSessionIdentityProvider().also { it.initializeFake(7L) }
+        val gateway = TdLibJsonGateway(
+            configuration = TelegramApiConfiguration(1, "configured-placeholder"),
+            native = native,
+            libraryLoader = NativeLibraryLoader {},
+            dispatcher = StandardTestDispatcher(testScheduler),
+            identityProvider = identityProvider,
+        )
+        gateway.start()
+        runCurrent()
+
+        gateway.handleResponseForTest(
+            """{"@type":"updateFile","file":{"id":99,"size":1024,"local":{"path":"/tmp/phase3-partial","downloaded_size":128,"downloaded_prefix_size":128,"is_downloading_completed":false}}}""",
+        )
+        assertEquals(99, gateway.getFileSnapshot(99)?.fileId)
+
+        gateway.handleResponseForTest("""{"@type":"authorizationStateWaitPhoneNumber"}""")
+        assertNull(identityProvider.currentIdentity.value)
+        assertNull(gateway.getFileSnapshot(99))
+
+        gateway.handleResponseForTest(
+            """{"@type":"updateFile","file":{"id":99,"size":1024,"local":{"path":"/tmp/late-partial","downloaded_size":1024,"is_downloading_completed":true}}}""",
+        )
+        assertNull(gateway.getFileSnapshot(99))
+        gateway.close()
+        runCurrent()
+    }
+
+    @Test fun nonZeroDownloadedRangeDoesNotBecomeContiguousPrefix() = runTest {
+        val gateway = TdLibJsonGateway(
+            configuration = TelegramApiConfiguration(1, "configured-placeholder"),
+            native = RecordingNative(),
+            libraryLoader = NativeLibraryLoader {},
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        gateway.start()
+        runCurrent()
+
+        gateway.handleResponseForTest(
+            """{"@type":"updateFile","file":{"id":77,"size":4096,"remote":{"id":"remote-77"},"local":{"path":"/tmp/range-only","downloaded_size":512,"downloaded_prefix_size":0,"download_offset":1024,"is_downloading_completed":false}}}""",
+        )
+        val snapshot = checkNotNull(gateway.getFileSnapshot(77))
+        assertEquals(0L, snapshot.downloadedPrefixSizeBytes)
+        assertEquals(1024L, snapshot.downloadOffsetBytes)
+        assertEquals(512L, snapshot.downloadedSizeBytes)
+        gateway.close()
+        runCurrent()
+    }
+
+    @Test fun unknownLateFileUpdateIsBlockedUntilNewExplicitRequest() = runTest {
+        val native = RecordingNative()
+        val gateway = TdLibJsonGateway(
+            configuration = TelegramApiConfiguration(1, "configured-placeholder"),
+            native = native,
+            libraryLoader = NativeLibraryLoader {},
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        gateway.start()
+        runCurrent()
+        gateway.handleResponseForTest("""{"@type":"authorizationStateWaitPhoneNumber"}""")
+
+        gateway.handleResponseForTest(
+            """{"@type":"updateFile","file":{"id":123,"size":2048,"local":{"path":"/tmp/late","downloaded_size":2048,"is_downloading_completed":true}}}""",
+        )
+        assertNull(gateway.cachedFileSnapshotForTest(123))
+
+        assertEquals(ActionResult.ACCEPTED, gateway.requestFileRange(123, 0L, 512L))
+        gateway.handleResponseForTest(
+            """{"@type":"updateFile","file":{"id":123,"size":2048,"local":{"path":"/tmp/new","downloaded_size":512,"downloaded_prefix_size":512,"is_downloading_completed":false}}}""",
+        )
+        assertEquals(123, gateway.cachedFileSnapshotForTest(123)?.fileId)
+        gateway.close()
+        runCurrent()
     }
 
     @Test fun authSubmitIsStateGatedDeduplicatedAndErrorIsRedacted() = runTest {

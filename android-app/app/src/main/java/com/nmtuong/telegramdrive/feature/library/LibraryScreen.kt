@@ -23,7 +23,11 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
-fun LibraryScreen(viewModel: LibraryViewModel, onPreview: (PreviewTarget) -> Unit) {
+fun LibraryScreen(
+    viewModel: LibraryViewModel,
+    onPreview: (PreviewTarget) -> Unit,
+    onOpenGallery: (() -> Unit)? = null,
+) {
     val lazyPagingItems = viewModel.pagingDataFlow.collectAsLazyPagingItems()
     val sources by viewModel.sources.collectAsStateWithLifecycle()
     val selectedSourceId by viewModel.selectedSourceId.collectAsStateWithLifecycle()
@@ -49,6 +53,9 @@ fun LibraryScreen(viewModel: LibraryViewModel, onPreview: (PreviewTarget) -> Uni
                 text = selectedSourceTitle,
                 style = MaterialTheme.typography.headlineSmall,
             )
+            if (onOpenGallery != null) {
+                TextButton(onClick = onOpenGallery) { Text("Gallery") }
+            }
             TextButton(onClick = viewModel::logout) {
                 Text(stringResource(R.string.logout))
             }

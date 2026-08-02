@@ -1,0 +1,249 @@
+[
+  {
+    "text": "Saved Messages",
+    "center": "[319,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "text": "Source",
+    "center": "[109,408]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[640,540]",
+    "bounds": "[48,468][1232,612]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[640,1692]",
+    "bounds": "[48,648][1232,2736]",
+    "key": 3506402
+  },
+  {
+    "text": "Log out",
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "state": [
+      "checked"
+    ],
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[683,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1087,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Saved Messages",
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Matchic Coder",
+    "center": "[683,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Matchic Notifier",
+    "center": "[1087,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Heewon_Jeong_92_International_Accountant_SK_Enkav_full_videos.mp4",
+    "center": "[640,657]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,708]",
+    "key": 3506402
+  },
+  {
+    "text": "1.2 GB",
+    "center": "[1139,708]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,822]",
+    "key": 3506402
+  },
+  {
+    "text": "Hyuna_Kim_5.mp4",
+    "center": "[290,1026]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,1104]",
+    "key": 3506402
+  },
+  {
+    "text": "102.9 MB",
+    "center": "[1115,1104]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,1218]",
+    "key": 3506402
+  },
+  {
+    "text": "Hyuna_Kim_3.mp4",
+    "center": "[290,1422]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,1500]",
+    "key": 3506402
+  },
+  {
+    "text": "98.0 MB",
+    "center": "[1125,1500]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,1614]",
+    "key": 3506402
+  },
+  {
+    "text": "Hyeji_Lee_Guri_Dermatologist.mp4",
+    "center": "[470,1818]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,1896]",
+    "key": 3506402
+  },
+  {
+    "text": "152.9 MB",
+    "center": "[1115,1896]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,2010]",
+    "key": 3506402
+  },
+  {
+    "text": "Helt_Hari.mp4",
+    "center": "[242,2214]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,2292]",
+    "key": 3506402
+  },
+  {
+    "text": "233.2 MB",
+    "center": "[1115,2292]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,2406]",
+    "key": 3506402
+  },
+  {
+    "text": "Heo_Seohyun_18_2.mp4",
+    "center": "[355,2610]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,2688]",
+    "key": 3506402
+  },
+  {
+    "text": "92.4 MB",
+    "center": "[1125,2688]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,2769]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,822]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,1218]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,1614]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,2010]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,2406]",
+    "key": 3506402
+  }
+]

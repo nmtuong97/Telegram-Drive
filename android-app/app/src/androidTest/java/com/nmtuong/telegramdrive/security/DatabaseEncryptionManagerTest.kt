@@ -33,7 +33,7 @@ class DatabaseEncryptionManagerTest {
     // ── First creation ────────────────────────────────────────────────────────
 
     @Test
-    fun `first getOrGenerateKey creates and persists a non-empty key`() {
+    fun firstGetOrGenerateKeyCreatesAndPersistsNonEmptyKey() {
         val key = manager.getOrGenerateKey()
         assertNotNull(key)
         assertTrue(key.isNotEmpty())
@@ -42,7 +42,7 @@ class DatabaseEncryptionManagerTest {
     // ── Reuse ─────────────────────────────────────────────────────────────────
 
     @Test
-    fun `subsequent getOrGenerateKey returns same key`() {
+    fun subsequentGetOrGenerateKeyReturnsSameKey() {
         val key1 = manager.getOrGenerateKey()
         val key2 = manager.getOrGenerateKey()
         assertEquals("Key should be stable across calls", key1, key2)
@@ -51,7 +51,7 @@ class DatabaseEncryptionManagerTest {
     // ── Clear and regenerate ──────────────────────────────────────────────────
 
     @Test
-    fun `clearKey then getOrGenerateKey produces different key`() {
+    fun clearKeyThenGetOrGenerateKeyProducesDifferentKey() {
         val key1 = manager.getOrGenerateKey()
         manager.clearKey()
         val key2 = manager.getOrGenerateKey()
@@ -61,7 +61,7 @@ class DatabaseEncryptionManagerTest {
     // ── Missing Keystore alias ────────────────────────────────────────────────
 
     @Test
-    fun `missing Keystore alias throws DatabaseKeyException`() {
+    fun missingKeystoreAliasThrowsDatabaseKeyException() {
         manager.getOrGenerateKey() // Generate record
 
         // Manually delete Keystore entry
@@ -85,7 +85,7 @@ class DatabaseEncryptionManagerTest {
     // ── Clear clears both record and Keystore ─────────────────────────────────
 
     @Test
-    fun `clearKey removes Keystore alias`() {
+    fun clearKeyRemovesKeystoreAlias() {
         manager.getOrGenerateKey()
         manager.clearKey()
 
@@ -100,7 +100,7 @@ class DatabaseEncryptionManagerTest {
     // ── Corrupt record ────────────────────────────────────────────────────────
 
     @Test
-    fun `corrupt ciphertext record throws DatabaseKeyException`() {
+    fun corruptCiphertextRecordThrowsDatabaseKeyException() {
         manager.getOrGenerateKey() // Generate valid record
 
         // Corrupt the stored record
@@ -121,7 +121,7 @@ class DatabaseEncryptionManagerTest {
     // ── Manager recreation (process restart simulation) ────────────────────────
 
     @Test
-    fun `manager recreated after persist returns same key (process restart simulation)`() {
+    fun managerRecreatedAfterPersistReturnsSameKey() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val key1 = manager.getOrGenerateKey()
 
@@ -135,7 +135,7 @@ class DatabaseEncryptionManagerTest {
     // ── Error message safety ──────────────────────────────────────────────────
 
     @Test
-    fun `DatabaseKeyException message does not expose key material or ciphertext`() {
+    fun databaseKeyExceptionMessageDoesNotExposeKeyMaterialOrCiphertext() {
         manager.getOrGenerateKey()
         val ks = java.security.KeyStore.getInstance("AndroidKeyStore")
         ks.load(null)

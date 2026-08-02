@@ -1,0 +1,226 @@
+[
+  {
+    "text": "Saved Messages",
+    "center": "[319,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "text": "Source",
+    "center": "[109,408]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[640,540]",
+    "bounds": "[48,468][1232,612]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[640,1692]",
+    "bounds": "[48,648][1232,2736]",
+    "key": 3506402
+  },
+  {
+    "text": "Log out",
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "state": [
+      "checked"
+    ],
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[683,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1087,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Saved Messages",
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Matchic Coder",
+    "center": "[683,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Matchic Notifier",
+    "center": "[1087,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Jeon_x_Yen_96__from_Aviation_Department_(3).mp4",
+    "center": "[640,756]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,870]",
+    "key": 3506402
+  },
+  {
+    "text": "103.0 MB",
+    "center": "[1115,870]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[233,984]",
+    "key": 3506402
+  },
+  {
+    "text": "Jeon_x_Yen_96__from_Aviation_Department_(2).mp4",
+    "center": "[640,1224]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,1338]",
+    "key": 3506402
+  },
+  {
+    "text": "102.9 MB",
+    "center": "[1115,1338]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,1452]",
+    "key": 3506402
+  },
+  {
+    "text": "Incheon_International_High_School-Teacher_(3).mp4",
+    "center": "[640,1692]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,1806]",
+    "key": 3506402
+  },
+  {
+    "text": "88.4 MB",
+    "center": "[1125,1806]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,1920]",
+    "key": 3506402
+  },
+  {
+    "text": "Hyunah_Kim_7_(2).mp4",
+    "center": "[346,2124]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,2202]",
+    "key": 3506402
+  },
+  {
+    "text": "101.1 MB",
+    "center": "[1115,2202]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,2316]",
+    "key": 3506402
+  },
+  {
+    "text": "Hyunah_Kim_7_(1).mp4",
+    "center": "[346,2520]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,2598]",
+    "key": 3506402
+  },
+  {
+    "text": "77.4 MB",
+    "center": "[1125,2598]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,2712]",
+    "key": 3506402
+  },
+  {
+    "text": "Preview",
+    "center": "[233,984]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,1452]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,1920]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,2316]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,2709]",
+    "key": 3506402
+  }
+]

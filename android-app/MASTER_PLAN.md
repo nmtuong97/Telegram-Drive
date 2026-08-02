@@ -88,7 +88,7 @@ Quyết định cuối phải được ghi vào tài liệu kiến trúc và kno
 
 ## 3. Phạm vi MVP
 
-### 3.1. Trong phạm vi Phase 0–2
+### 3.1. Trong phạm vi Phase 0–2 — MVP Android hiện tại
 
 * Android application độc lập.
 * Kotlin và Jetpack Compose.
@@ -116,25 +116,42 @@ Quyết định cuối phải được ghi vào tài liệu kiến trúc và kno
 * Offline/error behavior cơ bản.
 * Validation local bằng Gradle, Android CLI, emulator và thiết bị thật.
 
-### 3.2. Ngoài phạm vi MVP
+### 3.2. Ngoài phạm vi Phase 0–2
+
+Các mục dưới đây không thuộc MVP Phase 0–2 nhưng đã được phân công chính thức sang
+phase sau; không được hiểu là bị loại khỏi product roadmap:
 
 * Upload file.
 * Tạo, đổi tên hoặc xóa channel.
-* Global gallery xuyên toàn bộ tài khoản.
-* Full media index bằng Room.
-* Search toàn cục xuyên nhiều source.
-* Video streaming khi file chưa tải hoàn tất.
+* Global gallery xuyên toàn bộ tài khoản (Phase 5 / Backlog).
+* Full media index bằng Room cho Saved Messages (Phase 3, phạm vi chỉ ảnh và video).
+* Search/filter/sort local trên media index (Phase 3).
+* Video streaming khi file chưa tải hoàn tất (Phase 3, progressive TDLib partial/range download).
 * Background download phức tạp.
 * Picture-in-Picture.
 * Background audio service.
 * Multi-account.
 * Persistent export hàng loạt ra shared storage.
+* Hardening, release-ready, device matrix và performance budgets (Phase 4).
 * CI/CD.
 * MCP server.
 * Lightbuild.
 * Cloud build.
 * Automated release pipeline.
 * Play Store distribution.
+
+### 3.3. Roadmap chính thức sau Phase 2
+
+| Phase | Phạm vi |
+| --- | --- |
+| Phase 0–2 | MVP Android hiện tại |
+| Phase 3 | Saved Messages Local Media Gallery với TDLib progressive video streaming |
+| Phase 4 | Hardening và release-ready |
+| Phase 5 / Backlog | Các tính năng nâng cao còn lại |
+
+Phase 3 là feature/architecture mới kế thừa Phase 2. Phase 4 nhận toàn bộ acceptance
+criteria hardening/release-ready trước đây đặt ở Phase 3; Phase 5/Backlog nhận các
+advanced feature chưa thuộc Phase 3.
 
 ---
 
@@ -386,9 +403,10 @@ Phân biệt ba loại hành vi:
 
 * Nhận diện Saved Messages theo semantics chính thức của TDLib version được pin.
 * Không dựa vào title hoặc localized string.
-* MVP hỗ trợ lịch sử Saved Messages cơ bản.
-* Không quét toàn bộ history.
-* Không tạo global index.
+* Phase 0–2 hỗ trợ lịch sử Saved Messages cơ bản qua paging trực tiếp TDLib.
+* Phase 0–2 không quét toàn bộ history và không tạo global index.
+* Phase 3 kế thừa flow này để quét toàn bộ Saved Messages, nhưng chỉ index ảnh và video
+  vào Room theo account identity/generation.
 * Không làm mất khả năng mở rộng sang Saved Messages topics.
 * Có test hoặc runtime evidence với self-chat thật.
 
@@ -1113,141 +1131,146 @@ Không hỗ trợ:
 
 ---
 
-# PHASE 3 — HARDENING VÀ RELEASE-READY THỬ NGHIỆM
+# PHASE 3 — SAVED MESSAGES LOCAL MEDIA GALLERY VÀ TDLIB PROGRESSIVE VIDEO STREAMING
 
-## 23. Mục tiêu
+## 23. Mục tiêu và ranh giới
 
-Ổn định MVP, không mở rộng lớn về tính năng.
+Phase 3 là feature/architecture mới kế thừa Phase 2, không thay thế hoặc âm thầm loại
+bỏ source browser, chat/channel browsing, document/audio/PDF preview, secure sharing,
+transfer, login/session restore hay logout/reset hiện có.
 
-Tập trung:
+* Chỉ index ảnh và video từ Saved Messages.
+* TDLib/Telegram là nguồn dữ liệu gốc; Room là derived local source cho gallery, search,
+  filter, sort và paging.
+* Không thay đổi hoặc xóa message trên Telegram.
+* Dữ liệu và cache phải được cô lập theo account identity và database generation.
 
-* Lifecycle.
-* Concurrency.
-* Security.
-* Performance.
-* Release build.
-* Device coverage.
-* Data cleanup.
-* Regression.
+## 24. Persistence và synchronization
 
-## 24. Lifecycle matrix
+Room phải có migration không phá dữ liệu người dùng với các nhóm dữ liệu tương đương:
+`saved_media` cho message ảnh/video, `cached_file` cho file vật lý dùng chung và
+`sync_state` cho phase/cursor/watermark/checkpoint/error. `saved_media` lưu caption,
+stable display name, MIME, kích thước, duration, Telegram file ID, stable remote file
+identity và thumbnail/minithumbnail metadata. `cached_file` lưu identity account,
+stable remote identity, TDLib file ID hiện tại, path quan sát được, loại thumbnail/original/
+partial, size, access time và trạng thái none/partial/complete.
 
-Kiểm chứng:
+Flow bắt buộc là đăng ký update listener → chốt một head watermark → backfill giảm dần
+theo page và checkpoint sau commit → listener UPSERT song song → catch-up từ watermark
+đến head hiện tại → chỉ COMPLETED sau catch-up thành công. Phải resume được sau crash,
+idempotent khi backfill/listener/catch-up gặp cùng message, và xử lý new/edit/delete;
+message bị edit thành loại khác phải bị loại khỏi gallery. Runtime state không được thay
+thế persisted checkpoint. UI phải hiển thị phase, progress, partial-sync và retry/error.
 
-* Background và foreground.
-* Activity recreation.
-* Configuration change.
-* Process kill và restore.
-* Logout khi đang preview.
-* Logout khi đang download.
-* File tải dở.
-* Mất mạng và phục hồi.
-* Session hết hạn.
-* TDLib client đóng bất ngờ.
-* Player lifecycle.
-* Transfer late update.
-* Account reset.
+## 25. Room-backed gallery và image lifecycle
 
-## 25. Performance
+Gallery đọc bằng Paging từ Room, không paging trực tiếp TDLib history. Gallery phải có
+adaptive/staggered grid, placeholder/minithumbnail/thumbnail, lazy thumbnail request có
+deduplication và concurrency limit, cache eviction/reload policy, group theo tháng,
+search local theo filename/caption, filter all/image/video/local-file và sort mới/cũ.
+Room change phải tự phản ánh; không load toàn bộ dataset vào memory.
 
-* Xác định reference setup.
-* Đo baseline.
-* Đặt budgets dựa trên dữ liệu.
-* Kiểm tra startup.
-* Paging.
-* Thumbnail memory.
-* Image lớn.
-* Video lớn.
-* PDF nhiều trang.
-* Main-thread work.
-* Memory growth.
-* ANR.
-* OOM.
+Image viewer phải reconcile TDLib state, filesystem existence và readability/validity trước
+khi mở; thiếu hoặc stale path thì tải lại qua TDLib, hiển thị loading/progress/error/retry,
+và xóa cache ảnh không được xóa message hoặc metadata.
 
-Không tối ưu ngoài budget nếu không có bằng chứng UX.
+## 26. Progressive video streaming
 
-## 26. Security và release
+Trước production player phải có feasibility spike trên tài khoản Telegram thật với video
+đủ lớn để chứng minh `downloadFile(fileId, offset, limit, ...)`, partial byte reads,
+`updateFile`, `downloadOffset` và `downloadedPrefixSize`, playback trước full download,
+range download khi seek và resume. Nếu không chứng minh được, phải ghi request/response,
+file state, DataSource/player failure và giới hạn stack; không tự đổi thành full-download.
 
-* Release/minified build hoàn chỉnh.
-* R8 không phá JNI hoặc reflection behavior cần thiết.
-* Debug diagnostics không xuất hiện trong release.
-* Không log secret.
-* Backup policy vẫn đúng.
-* Account cleanup hoàn chỉnh.
-* Content sharing an toàn.
-* Dependency provenance được duy trì.
-* Git history không chứa credential được biết đến.
+Kiến trúc mục tiêu là `Media3/ExoPlayer → TdLibVideoDataSource →
+VideoStreamingCoordinator → TDLib downloadFile(offset, limit) → partial local file`.
+Partial file là cache tạm trên thiết bị, không phải phát trực tiếp không dùng bộ nhớ.
+Không hỗ trợ adaptive bitrate, HLS hoặc DASH trong Phase 3. File complete hợp lệ được
+phát local; file chưa complete phải buffer vùng liên tục cần thiết, phát trước khi tải
+xong, prefetch theo nhu cầu và phân biệt playback/buffer progress. Stable file identity
+chỉ có một coordinator/transfer; seek hủy/chuyển request an toàn; mất mạng chuyển sang
+buffering/error có retry; đóng player release Media3, cancel transfer không cần thiết và
+dọn partial/full video bằng lifecycle/API TDLib phù hợp. Không thêm Save offline.
 
-## 27. Device coverage
+## 27. Account isolation, cache và bảo toàn Phase 2
 
-Tối thiểu:
+Startup reconcile phải đồng thời dựa trên TDLib state, filesystem existence và file
+readability/validity; không coi enum Room là sự thật tuyệt đối. Phải xử lý shared-file
+deduplication, cache eviction, Android cache eviction, late update, reset/logout trong
+khi transfer/player đang chạy, và không cho callback generation cũ ghi lại sau reset.
+Logout xóa scanner, transfer/player, metadata và cache đúng account policy; Auto Backup
+không được restore nhầm Room/cache/session/download.
 
-* Hai thiết bị thật nếu khả dụng.
-* Một thiết bị đại diện hiệu năng trung bình.
-* Một thiết bị yếu hơn hoặc API thấp hơn trong support matrix.
-* Emulator tại minimum supported API.
-* Emulator tại API mới.
-* Tài khoản có 2FA.
-* Mạng chậm.
-* Mất mạng giữa transfer.
-* File lớn.
-* Ảnh lớn.
-* PDF nhiều trang.
-* Storage thấp.
+Mọi refactor Phase 2 phải giữ backward compatibility và regression tests cho source
+browser, document/audio/PDF/video preview, secure sharing, existing paging/transfer,
+fake runtime, login/session restore và logout/reset.
 
-## 28. Phase 3 done when
+## 28. Phase 3 validation và acceptance
 
-* Không còn crash nghiêm trọng trong flow chính.
-* Lifecycle matrix pass.
-* Không duplicate TDLib client.
-* Không leak player hoặc transfer observer.
-* Không ANR/OOM trong test profile.
-* Release/minified build hoạt động.
-* R8/JNI smoke pass.
-* Security checklist pass.
-* Logout/reset xóa toàn bộ account data.
-* Performance budgets được ghi nhận và đáp ứng.
-* Hoạt động ổn định trên device matrix đã định nghĩa.
+Phase 3 phải có unit tests cho mapping/identity/classification/idempotency/cursor/watermark/
+catch-up/crash-resume/update/cache/Room query/grouping/transfer races và account isolation;
+fake dataset hàng nghìn item nhiều tháng/năm với duplicate/edit/delete/cancel/late update;
+emulator/device evidence cho sync/gallery/thumbnail/image/video/seek/network/logout/regression;
+và real-account evidence cho Saved Messages, full scan, incremental updates, ảnh, video
+Telegram, document-video, video lớn, progressive start-before-complete, seek, storage và
+logout. Test async phải có termination condition rõ ràng.
+
+## 29. Phase 3 done when
+
+Room schema/migration/isolation, full backfill/checkpoint/watermark/catch-up, incremental
+new/edit/delete, Room Paging gallery, local search/filter/sort/month grouping, lazy thumbnail
+cache, reconciled image viewer, progressive video start-before-complete/seek/recovery,
+player cleanup/cache policy, logout isolation, Phase 2 regression, unit tests/lint/build,
+fake runtime, emulator/device verification, real-account verification, documentation,
+evidence và APK SHA-256 đều đạt. Nếu một mục chưa có bằng chứng thì Phase 3 chưa hoàn tất.
 
 ---
 
-# PHASE 4 — ADVANCED FEATURES
+# PHASE 4 — HARDENING VÀ RELEASE-READY THỬ NGHIỆM
 
-## 29. Nguyên tắc
+## 30. Mục tiêu
 
-Phase 4 chỉ bắt đầu khi MVP đã được sử dụng thực tế và có bằng chứng nhu cầu.
+Ổn định MVP và Phase 3, không mở rộng tính năng lớn. Các acceptance criteria hardening
+trước đây đặt ở Phase 3 được chuyển nguyên vẹn sang Phase 4:
 
-Mỗi feature phải có spec và estimate riêng.
+* Lifecycle, concurrency, security, performance, release build, device coverage, cleanup và regression.
+* Background/foreground, recreation, process kill/restore, logout khi preview/download,
+  mất mạng, session hết hạn, TDLib close bất ngờ, player lifecycle, late update và reset.
+* Release/minified, R8/JNI smoke, backup/security checklist, account cleanup, content
+  sharing, dependency provenance và không có credential trong history.
+* Reference setup, baseline/budgets, startup/paging/memory/ANR/OOM và device matrix.
 
-Các candidate feature:
+## 31. Phase 4 done when
 
-* Global gallery.
-* Full media index.
-* Search toàn cục.
-* Advanced filter và sort.
-* Offline metadata index.
-* Incremental synchronization.
-* Video streaming trước khi download hoàn tất.
-* Background transfer.
-* Picture-in-Picture.
-* Background audio.
-* Persistent user export.
-* Multi-account.
-
-Không đưa Phase 4 feature ngược vào Phase 0–2 nếu chưa cập nhật scope và estimate.
+Lifecycle matrix pass, không duplicate client hoặc leak player/observer, không ANR/OOM,
+release/minified build và R8/JNI smoke pass, security/cleanup pass, budgets được đáp ứng
+và ứng dụng ổn định trên device matrix đã định nghĩa.
 
 ---
 
-## 30. Workflow với Codex và AI agent
+# PHASE 5 / BACKLOG — ADVANCED FEATURES
 
-### 30.1. Nguyên tắc session
+## 32. Nguyên tắc
+
+Phase 5 chỉ bắt đầu khi Phase 4 có bằng chứng nhu cầu; mỗi feature có spec và estimate
+riêng. Các candidate còn lại là global gallery xuyên tài khoản, full media index ngoài
+Saved Messages, search toàn cục, offline metadata index, background transfer, Picture-in-
+Picture, background audio, persistent export và multi-account.
+
+Không đưa Phase 5 feature ngược vào Phase 0–4 nếu chưa cập nhật scope và estimate.
+
+---
+
+## 33. Workflow với Codex và AI agent
+
+### 33.1. Nguyên tắc session
 
 * Một session cho một kết quả rõ ràng.
 * Dùng `/goal` cho một phase hoặc milestone dài.
 * Dùng planning trước các task nhiều module hoặc rủi ro cao.
 * Không dùng một chat duy nhất cho toàn bộ project.
 
-### 30.2. Prompt contract
+### 33.2. Prompt contract
 
 Mỗi task phải có:
 
@@ -1256,7 +1279,7 @@ Mỗi task phải có:
 * Constraints.
 * Done when.
 
-### 30.3. Task workflow
+### 33.3. Task workflow
 
 1. Đọc `AGENTS.md`.
 2. Đọc spec của phase/task.
@@ -1273,7 +1296,7 @@ Mỗi task phải có:
 13. Chạy lại validation.
 14. Báo cáo kết quả và rủi ro còn lại.
 
-### 30.4. `AGENTS.md`
+### 33.4. `AGENTS.md`
 
 Phải chứa các quy tắc dài hạn:
 
@@ -1292,7 +1315,7 @@ Phải chứa các quy tắc dài hạn:
 
 ---
 
-## 31. Deliverable chung
+## 34. Deliverable chung
 
 Project phải duy trì:
 
@@ -1313,13 +1336,13 @@ Tài liệu chỉ mô tả spec, decision và evidence; không trở thành hư�
 
 ---
 
-## 32. Estimate cuối cùng
+## 35. Estimate cuối cùng
 
 | Phạm vi                             |               Estimate |
 | ----------------------------------- | ---------------------: |
 | Phase 0–2: MVP                      |    **25–44 ngày công** |
-| Phase 0–3: release-ready thử nghiệm |    **31–56 ngày công** |
-| Phase 4                             | Spec và estimate riêng |
+| Phase 0–4: release-ready thử nghiệm |    **31–56 ngày công** |
+| Phase 5 / Backlog                   | Spec và estimate riêng |
 
 Giả định:
 
@@ -1344,7 +1367,7 @@ Estimate phải được xem xét lại nếu thay đổi:
 
 ---
 
-## 33. MVP completion criteria
+## 36. MVP completion criteria
 
 MVP chỉ hoàn thành khi:
 
@@ -1369,13 +1392,13 @@ MVP chỉ hoàn thành khi:
 * Không lộ credential.
 * Không ANR hoặc OOM trong test profile.
 * Unit test, runtime validation, lint và build pass.
-* Release/minified smoke pass.
+* Debug build, test và lint pass.
 * Documentation đầy đủ.
-* Không có Phase 4 feature bị triển khai ngoài scope.
+* Không có Phase 3–5 feature bị triển khai trong MVP ngoài scope.
 
 ---
 
-## 34. Final consistency rules
+## 37. Final consistency rules
 
 Bản kế hoạch và các spec con phải luôn bảo đảm:
 

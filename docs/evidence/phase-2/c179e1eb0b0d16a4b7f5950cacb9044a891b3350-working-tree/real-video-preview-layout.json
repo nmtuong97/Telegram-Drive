@@ -1,0 +1,33 @@
+[
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[640,1248]",
+    "key": 3506402
+  },
+  {
+    "text": "This file is not supported for in-app preview. It will be shared as a temporary read-only content URI.",
+    "center": "[640,1428]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[640,1608]",
+    "key": 3506402
+  },
+  {
+    "text": "Back",
+    "center": "[640,1248]",
+    "key": 3506402
+  },
+  {
+    "text": "Open with another app",
+    "center": "[640,1608]",
+    "key": 3506402
+  }
+]
