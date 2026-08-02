@@ -20,7 +20,8 @@ real-account gate. A file is not described as passing unless it was actually pro
 | Latest lifecycle hardening commit | `3d0a15a` (`fix(android): harden phase 3 account and media lifecycle`). |
 | Latest account-isolation/gallery-flow commit | `730e2b1` (`fix(android): scope gallery flows to account identity`). |
 | Previous range-cancellation hardening commit | `3466de3` (`fix(android): cancel stale video range waits`). |
-| Latest implementation commit | `305b309` (`fix(android): harden phase 3 media cache and readers`). |
+| Previous media-cache/reader hardening commit | `305b309` (`fix(android): harden phase 3 media cache and readers`). |
+| Latest implementation commit | `1224709` (`fix(android): add non-destructive media database migration`). |
 
 ## Commands and exit codes
 
@@ -34,7 +35,7 @@ All Gradle invocations were run one at a time through
 | `:app:lintDebug` | 0 | Lint passed; warnings only. |
 | `:app:assembleDebug -PtelegramDataSource=fake` | 0 | Final fake APK produced; SHA-256 is recorded below. |
 | `:app:assembleDebug` (real default) | 0 | Real APK assembled; launch requires Telegram sign-in. |
-| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | 0 | 12 tests on `TelegramDrive_Small` API 36, 0 failures/errors/skips; includes account-scoped Paging rebinding. |
+| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | 0 | 13 tests on `TelegramDrive_Small` API 36, 0 failures/errors/skips; includes Room 1→2 migration, account-scoped Paging rebinding, repository crash-resume/update, and shared-video release. |
 
 After the final Gradle gates, the workspace was checked for Gradle daemon/test-worker
 processes; a stale daemon was terminated and no test worker remained.
@@ -65,6 +66,7 @@ Device: `TelegramDrive_Small` AVD, serial `emulator-5554`, API 36.
 ## Architecture evidence
 
 - Room entities/DAOs/database: `android-app/app/src/main/java/com/nmtuong/telegramdrive/data/local/`.
+- Room schema artifact: `android-app/app/schemas/com.nmtuong.telegramdrive.data.local.MediaDatabase/2.json`; `MIGRATION_1_2` adds catch-up completion time without destructive reset.
 - Sync and Paging repository: `data/SavedMediaRepository.kt`.
 - TDLib update/file snapshot bridge: `telegram/TdLibJsonGateway.kt`.
 - Range coordinator and Media3 data source: `data/video/`.
@@ -77,6 +79,7 @@ Device: `TelegramDrive_Small` AVD, serial `emulator-5554`, API 36.
 - Unit message mapping: `PhaseThreeMessageMappingTest.kt` plus existing mapper tests.
 - Unit progressive range/seek/cancel cleanup: `VideoStreamingCoordinatorTest.kt`.
 - Unit LRU thumbnail eviction: `MediaAccessCoordinatorTest.kt`.
+- Instrumented Room migration: `MediaDatabaseMigrationTest.migratesVersionOneWithoutDroppingSyncState`.
 - TDLib logout/reset stale-file invalidation: `TdLibJsonGatewayTest.logoutInvalidatesFileSnapshotsAndBlocksLateUpdates`.
 - Unit 3,000-item fake history with duplicate stable file identities and video document
   metadata: `FakeSavedMediaGatewayTest.kt`.
@@ -104,5 +107,5 @@ entry. The scope is not silently downgraded to full-download playback.
 ## APK
 
 - Expected final path: `android-app/app/build/outputs/apk/debug/app-debug.apk`.
-- Final fake APK size: `70,112,513` bytes.
-- Final SHA-256: `0c212bc00da69e358aa6c16cb4c4e735d4c644bbce18e187d02882bdb33029d5`.
+- Final fake APK size: `70,146,979` bytes.
+- Final SHA-256: `94d880fd64497d7fb4a3d38d8c956bbacfa0f3e5396b18bde123a66341389894`.

@@ -19,15 +19,16 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 - Latest lifecycle hardening commit: `3d0a15a` (`fix(android): harden phase 3 account and media lifecycle`).
 - Latest account-isolation/gallery-flow commit: `730e2b1` (`fix(android): scope gallery flows to account identity`).
 - Previous range-cancellation hardening commit: `3466de3` (`fix(android): cancel stale video range waits`).
-- Latest implementation commit: `305b309` (`fix(android): harden phase 3 media cache and readers`).
+- Previous media-cache/reader hardening commit: `305b309` (`fix(android): harden phase 3 media cache and readers`).
+- Latest implementation commit: `1224709` (`fix(android): add non-destructive media database migration`).
 
 ## Implemented
 
 - Master Plan roadmap now makes Phase 3 the Room-backed Saved Messages image/video
   gallery with TDLib progressive partial/range video streaming; hardening is Phase 4.
 - Room schema and account/generation keys for `saved_media`, `cached_file`, and
-  `sync_state`; database is created below `noBackupFilesDir` and has no destructive
-  migration.
+  `sync_state`; database is created below `noBackupFilesDir`, exports schema version 2,
+  and migrates version 1 non-destructively while preserving sync state.
 - Full-history sync flow with head watermark, resumable backfill cursor, per-page
   transaction checkpoints, listener UPSERTs, bounded catch-up, and new/edit/delete
   handling.
@@ -92,9 +93,9 @@ worktree. It does not upgrade implementation evidence into real-account evidence
 | --- | --- | --- |
 | `:app:testDebugUnitTest -PtelegramDataSource=fake` | PASS, exit 0 | 129 tests completed, 0 failures/errors/skips; includes LRU thumbnail eviction, complete-file-size validation, independent shared-reader cursors, and seek supersession without waiting for the timeout. |
 | `:app:lintDebug` | PASS, exit 0 | No lint errors; warnings only. |
-| `:app:assembleDebug -PtelegramDataSource=fake` | PASS, exit 0 | Final APK is 70,112,513 bytes; SHA-256: `0c212bc00da69e358aa6c16cb4c4e735d4c644bbce18e187d02882bdb33029d5`. |
+| `:app:assembleDebug -PtelegramDataSource=fake` | PASS, exit 0 | Final APK is 70,146,979 bytes; SHA-256: `94d880fd64497d7fb4a3d38d8c956bbacfa0f3e5396b18bde123a66341389894`. |
 | `:app:assembleDebug` (real default) | PASS, exit 0 | Current source also assembles real APK; launch stopped at Telegram sign-in and requires user credentials/OTP/2FA. |
-| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | PASS, exit 0 | 12 tests on `TelegramDrive_Small` API 36, 0 failures/errors/skips, including account-scoped Paging rebinding, repository crash-resume/update, and shared-video release tests. |
+| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | PASS, exit 0 | 13 tests on `TelegramDrive_Small` API 36, 0 failures/errors/skips, including Room 1→2 migration, account-scoped Paging rebinding, repository crash-resume/update, and shared-video release tests. |
 | Fake runtime | PASS for fake scope | Current Room-backed gallery is captured in [`phase-3-current-gallery.png`](evidence/phase-3-current-gallery.png) with hierarchy in [`phase-3-current-gallery-layout.json`](evidence/phase-3-current-gallery-layout.json); fake Media3 video preview is captured in [`phase-3-current-video.png`](evidence/phase-3-current-video.png). Resumed fake APK sign-in state is captured in [`phase-3-resumed-runtime.png`](evidence/phase-3-resumed-runtime.png) with hierarchy in [`phase-3-resumed-runtime-layout.json`](evidence/phase-3-resumed-runtime-layout.json). Earlier image-viewer evidence remains valid. These are not real-TDLib progressive-streaming evidence. |
 | Android CLI | PASS | Final fake APK deployed with `android run`; current sign-in layout and annotated screenshots are [`phase-3-final-layout.json`](evidence/phase-3-final-layout.json), [`phase-3-final-runtime.png`](evidence/phase-3-final-runtime.png), and the later session check [`phase-3-current-session-layout.json`](evidence/phase-3-current-session-layout.json) / [`phase-3-current-session.png`](evidence/phase-3-current-session.png). |
 | Real Telegram account | NOT VERIFIED | Real preflight reaches sign-in; progressive spike, large-video seek, network recovery, and account logout remain `USER_INTERACTION_REQUIRED` / pending authorized real-account run. |
