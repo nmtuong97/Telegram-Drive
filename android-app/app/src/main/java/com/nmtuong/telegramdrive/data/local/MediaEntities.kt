@@ -79,4 +79,5 @@ data class SyncStateEntity(
   val lastError: String?,
   val retryCount: Int,
   val lastAttemptAtEpochMillis: Long?,
+  val lastSuccessfulCatchUpAtEpochMillis: Long? = null,
 )

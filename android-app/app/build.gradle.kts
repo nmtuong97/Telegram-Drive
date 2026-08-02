@@ -7,6 +7,11 @@ plugins {
   alias(libs.plugins.ksp)
 }
 
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
+  arg("room.incremental", "true")
+}
+
 val telegramDataSource = providers.gradleProperty("telegramDataSource").orElse("real")
 val telegramApiProperties = Properties().apply {
     rootProject.file("telegram-api.properties").takeIf { it.isFile }?.inputStream()?.use(::load)

@@ -193,7 +193,13 @@ class SavedMediaRepository(
 
     try {
       if (state.headWatermark == null) {
-        database.syncStateDao().upsert(state.copy(phase = MediaSyncPhase.COMPLETED.name, lastSuccessfulCatchUpHead = null))
+        database.syncStateDao().upsert(
+          state.copy(
+            phase = MediaSyncPhase.COMPLETED.name,
+            lastSuccessfulCatchUpHead = null,
+            lastSuccessfulCatchUpAtEpochMillis = System.currentTimeMillis(),
+          ),
+        )
         _syncResult.value = SavedMediaSyncResult.Completed
         return@withContext SavedMediaSyncResult.Completed
       }
@@ -300,6 +306,7 @@ class SavedMediaRepository(
             phase = MediaSyncPhase.COMPLETED.name,
             backfillCursor = cursor,
             lastSuccessfulCatchUpHead = latestHead ?: watermark,
+            lastSuccessfulCatchUpAtEpochMillis = System.currentTimeMillis(),
             lastCheckpointAtEpochMillis = System.currentTimeMillis(),
             lastError = null,
           ),
