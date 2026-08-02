@@ -5,6 +5,7 @@ import com.nmtuong.telegramdrive.security.TelegramApiConfiguration
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonObject
@@ -12,6 +13,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -181,6 +183,143 @@ class TdLibJsonGatewayTest {
         runCurrent()
     }
 
+    @Test fun missingApiConfigurationIsActionableInsteadOfLoadingForever() = runTest {
+        val gateway = TdLibJsonGateway(
+            native = RecordingNative(),
+            libraryLoader = NativeLibraryLoader {},
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        gateway.start()
+        runCurrent()
+
+        assertEquals(AuthorizationState.MissingConfiguration, gateway.authorization.value.state)
+        assertEquals(AuthorizationErrorKind.CONFIGURATION, gateway.authorization.value.error?.kind)
+        assertFalse(gateway.authorization.value.actionPending)
+        gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
+        runCurrent()
+    }
+
+    @Test fun codeMetadataEnablesResendAndChangingPhone() = runTest {
+        val native = RecordingNative()
+        val gateway = TdLibJsonGateway(
+            configuration = TelegramApiConfiguration(1, "configured-placeholder"),
+            native = native,
+            libraryLoader = NativeLibraryLoader {},
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        gateway.start()
+        runCurrent()
+        gateway.handleResponseForTest(
+            """{"@type":"authorizationStateWaitCode","code_info":{"phone_number":"+10000000000","type":{"@type":"authenticationCodeTypeSmsWord","first_letter":"A"},"next_type":{"@type":"authenticationCodeTypeSms","length":5},"timeout":0}}""",
+        )
+
+        assertEquals(ActionResult.ACCEPTED, gateway.submit(AuthorizationAction.ResendCode))
+        assertTrue(native.requests.last().contains("resendAuthenticationCode"))
+        val resendExtra = requestExtra(native.requests.last())
+        gateway.handleResponseForTest("""{"@type":"error","@extra":"$resendExtra","code":400,"message":"PHONE_CODE_INVALID"}""")
+
+        assertEquals(ActionResult.ACCEPTED, gateway.submit(AuthorizationAction.ChangePhone("+19999999999")))
+        assertTrue(native.requests.last().contains("setAuthenticationPhoneNumber"))
+        assertTrue(native.requests.last().contains("+19999999999"))
+        gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
+        runCurrent()
+    }
+
+    @Test fun qrActionUsesOfficialRequestBeforeOtherDeviceState() = runTest {
+        val native = RecordingNative()
+        val gateway = TdLibJsonGateway(
+            configuration = TelegramApiConfiguration(1, "configured-placeholder"),
+            native = native,
+            libraryLoader = NativeLibraryLoader {},
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        gateway.start()
+        runCurrent()
+        gateway.handleResponseForTest("""{"@type":"authorizationStateWaitPhoneNumber"}""")
+
+        assertEquals(ActionResult.ACCEPTED, gateway.submit(AuthorizationAction.RequestQrCode))
+        assertTrue(native.requests.last().contains("requestQrCodeAuthentication"))
+        val qrExtra = requestExtra(native.requests.last())
+        gateway.handleResponseForTest("""{"@type":"ok","@extra":"$qrExtra"}""")
+        gateway.handleResponseForTest("""{"@type":"authorizationStateWaitOtherDeviceConfirmation","link":"tg://login?token=safe-placeholder"}""")
+        assertEquals(
+            AuthorizationState.WaitingForOtherDevice("tg://login?token=safe-placeholder"),
+            gateway.authorization.value.state,
+        )
+        gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
+        runCurrent()
+    }
+
+    @Test fun registrationExplicitlyAcceptsTermsThenSubmitsNames() = runTest {
+        val native = RecordingNative()
+        val gateway = TdLibJsonGateway(
+            configuration = TelegramApiConfiguration(1, "configured-placeholder"),
+            native = native,
+            libraryLoader = NativeLibraryLoader {},
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        gateway.start()
+        runCurrent()
+        gateway.handleResponseForTest(
+            """{"@type":"authorizationStateWaitRegistration","terms_of_service":{"id":"terms-v1","text":{"@type":"formattedText","text":"Terms"}}}""",
+        )
+        assertEquals(
+            ActionResult.INVALID_STATE,
+            gateway.submit(AuthorizationAction.SubmitRegistration("Ada", "Lovelace", false)),
+        )
+        assertEquals(
+            ActionResult.ACCEPTED,
+            gateway.submit(AuthorizationAction.SubmitRegistration("Ada", "Lovelace", true)),
+        )
+        assertTrue(native.requests.last().contains("registerUser"))
+        assertTrue(native.requests.last().contains("Ada"))
+        val registrationExtra = requestExtra(native.requests.last())
+        gateway.handleResponseForTest("""{"@type":"ok","@extra":"$registrationExtra"}""")
+        gateway.handleResponseForTest("""{"@type":"authorizationStateReady"}""")
+        assertEquals(AuthorizationState.Ready, gateway.authorization.value.state)
+        gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
+        runCurrent()
+    }
+
+    @Test fun authRequestTimeoutClearsPendingState() = runTest {
+        val gateway = TdLibJsonGateway(
+            configuration = TelegramApiConfiguration(1, "configured-placeholder"),
+            native = RecordingNative(),
+            libraryLoader = NativeLibraryLoader {},
+            dispatcher = StandardTestDispatcher(testScheduler),
+            authActionTimeoutMs = 100,
+        )
+        gateway.start()
+        runCurrent()
+        gateway.handleResponseForTest("""{"@type":"authorizationStateWaitPhoneNumber"}""")
+        assertEquals(ActionResult.ACCEPTED, gateway.submit(AuthorizationAction.SubmitPhone("+10000000000")))
+        advanceTimeBy(101)
+        runCurrent()
+
+        assertFalse(gateway.authorization.value.actionPending)
+        assertEquals(AuthorizationErrorKind.NETWORK, gateway.authorization.value.error?.kind)
+        gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
+        runCurrent()
+    }
+
+    @Test fun nativeAuthSendFailureClearsPendingState() = runTest {
+        val gateway = TdLibJsonGateway(
+            configuration = TelegramApiConfiguration(1, "configured-placeholder"),
+            native = FailingAuthSendNative(),
+            libraryLoader = NativeLibraryLoader {},
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        gateway.start()
+        runCurrent()
+        gateway.handleResponseForTest("""{"@type":"authorizationStateWaitPhoneNumber"}""")
+
+        assertEquals(ActionResult.INVALID_STATE, gateway.submit(AuthorizationAction.SubmitPhone("+10000000000")))
+        assertFalse(gateway.authorization.value.actionPending)
+        assertEquals(AuthorizationErrorKind.NETWORK, gateway.authorization.value.error?.kind)
+        gateway.handleResponseForTest("""{"@type":"authorizationStateClosed"}""")
+        runCurrent()
+    }
+
     private fun withGateway(
         block: suspend TestScope.(TdLibJsonGateway, RecordingNative) -> Unit,
     ) = runTest {
@@ -215,5 +354,23 @@ private class RecordingNative(private val failCreate: Boolean = false) : TdLibNa
         if (responseDelivered) return null
         responseDelivered = true
         return """{"@type":"authorizationStateWaitTdlibParameters"}"""
+    }
+}
+
+private class FailingAuthSendNative : TdLibNative {
+    private var firstReceive = true
+
+    override fun createClientId(): Int = 7
+
+    override fun send(clientId: Int, request: String) {
+        if (request.contains("setAuthenticationPhoneNumber")) error("network unavailable")
+    }
+
+    override fun receive(timeoutSeconds: Double): String? {
+        if (firstReceive) {
+            firstReceive = false
+            return """{"@type":"authorizationStateWaitTdlibParameters"}"""
+        }
+        return null
     }
 }

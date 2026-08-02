@@ -8,6 +8,7 @@ import com.nmtuong.telegramdrive.security.SensitiveDataRedactor
 import com.nmtuong.telegramdrive.security.TelegramApiConfiguration
 import java.io.File
 import com.nmtuong.telegramdrive.security.DatabaseEncryptionManager
+import com.nmtuong.telegramdrive.security.DatabaseKeyException
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.ConcurrentHashMap
@@ -30,6 +31,8 @@ private const val CLOSE_TIMEOUT_MS = 20_000L
  * logOut requires network; if this times out, reset returns a recoverable error.
  */
 private const val LOGOUT_TIMEOUT_MS = 30_000L
+private const val AUTH_ACTION_TIMEOUT_MS = 15_000L
+private const val MAX_PARAMETER_ATTEMPTS = 2
 
 /**
  * Safety limit for filtered empty page scanning.
@@ -57,6 +60,7 @@ class TdLibJsonGateway internal constructor(
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val closeTimeoutMs: Long = CLOSE_TIMEOUT_MS,
     private val logoutTimeoutMs: Long = LOGOUT_TIMEOUT_MS,
+    private val authActionTimeoutMs: Long = AUTH_ACTION_TIMEOUT_MS,
     private val identityProvider: AccountSessionIdentityProvider? = null,
     /** CP7: Provides current account identity; injected to remove hardcoded (1L,1L). */
     private val currentAccountId: () -> Long = { identityProvider?.accountId ?: 0L },
@@ -75,10 +79,14 @@ class TdLibJsonGateway internal constructor(
     private var countedClient = false
     private var pendingAuthAction = false
     private var pendingAuthRequest: String? = null
+    private var authActionTimeoutJob: Job? = null
     private val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
 
     // Legacy fields kept for backward compatibility
     private var pendingParametersRequest: String? = null
+    private var parametersTimeoutJob: Job? = null
+    private var parameterAttempts = 0
+    private var authResetting = false
     private var pendingLibraryRequest: String? = null
     private var pendingHistoryLimit = 50
     private val pendingDownloads = mutableSetOf<Int>()
@@ -184,6 +192,7 @@ class TdLibJsonGateway internal constructor(
             "authorizationStateWaitTdlibParameters", "authorizationStateWaitPhoneNumber",
             "authorizationStateWaitCode", "authorizationStateWaitPassword", "authorizationStateWaitEmailAddress",
             "authorizationStateWaitEmailCode", "authorizationStateWaitOtherDeviceConfirmation",
+            "authorizationStateWaitRegistration", "authorizationStateWaitPremiumPurchase",
             "authorizationStateReady", "authorizationStateLoggingOut", "authorizationStateClosing",
             "authorizationStateClosed" -> handleAuthorization(root)
             "updateFile" -> root.obj("file")?.let(::handleFile)
@@ -203,12 +212,33 @@ class TdLibJsonGateway internal constructor(
     }
 
     private fun handleAuthorization(value: JsonObject) {
-        val mapped = TdLibStateMapper.authorizationState(value.toString())
-            ?: AuthorizationState.Other(value.string("@type") ?: "unknown")
+        val snapshot = TdLibStateMapper.authorizationSnapshot(value.toString())
+            ?: AuthorizationStateSnapshot(AuthorizationState.Other(value.string("@type") ?: "unknown"))
+        val mapped = snapshot.state
         synchronized(lock) {
+            if (authResetting && mapped !in setOf(
+                    AuthorizationState.LoggingOut,
+                    AuthorizationState.Closing,
+                    AuthorizationState.Closed,
+                )
+            ) {
+                return
+            }
             pendingAuthAction = false
             pendingAuthRequest = null
-            mutableAuthorization.value = AuthorizationSession(state = mapped)
+            authActionTimeoutJob?.cancel()
+            authActionTimeoutJob = null
+            if (mapped !is AuthorizationState.WaitingForTdlibParameters) {
+                parametersTimeoutJob?.cancel()
+                parametersTimeoutJob = null
+                pendingParametersRequest = null
+                parameterAttempts = 0
+            }
+            mutableAuthorization.value = AuthorizationSession(
+                state = mapped,
+                codeInfo = snapshot.codeInfo,
+                emailCodeInfo = snapshot.emailCodeInfo,
+            )
             mutableState.value = mutableState.value.copy(authorizationState = mapped)
         }
         when (mapped) {
@@ -263,7 +293,11 @@ class TdLibJsonGateway internal constructor(
             pendingDownloadRequests.clear()
             pendingCancelRequests.clear()
             pendingAuthRequest = null
+            authActionTimeoutJob?.cancel()
+            authActionTimeoutJob = null
             pendingParametersRequest = null
+            parametersTimeoutJob?.cancel()
+            parametersTimeoutJob = null
             pendingLibraryRequest = null
         }
         // Complete pending requests — do this outside synchronized to avoid deadlock
@@ -273,17 +307,46 @@ class TdLibJsonGateway internal constructor(
         // Stop the receive loop
         worker?.cancel()
         worker = null
+        // The gateway owns all jobs in this scope; terminal TDLib close ends that ownership.
+        scope.cancel()
     }
 
     private fun sendTdlibParametersOrExposeMissingConfig() {
-        if (!configuration.configured) {
-            mutableAuthorization.value = AuthorizationSession(state = AuthorizationState.MissingConfiguration)
-            return
+        synchronized(lock) {
+            if (pendingParametersRequest != null) return
+            if (!configuration.configured) {
+                val error = AuthorizationError(
+                    kind = AuthorizationErrorKind.CONFIGURATION,
+                    message = "Telegram API ID and hash are required in telegram-api.properties.",
+                    retryable = false,
+                )
+                mutableAuthorization.value = AuthorizationSession(
+                    state = AuthorizationState.MissingConfiguration,
+                    safeError = error.message,
+                    error = error,
+                )
+                mutableState.value = mutableState.value.copy(
+                    authorizationState = AuthorizationState.MissingConfiguration,
+                    safeError = error.message,
+                )
+                return
+            }
+            parameterAttempts += 1
         }
         val dbExists = databaseDirectory.exists() && (databaseDirectory.list()?.isNotEmpty() == true)
-        val key = encryptionManager?.getOrGenerateKey(
-            com.nmtuong.telegramdrive.security.DatabaseState(exists = dbExists)
-        ) ?: ""
+        val key = try {
+            encryptionManager?.getOrGenerateKey(
+                com.nmtuong.telegramdrive.security.DatabaseState(exists = dbExists)
+            ) ?: ""
+        } catch (error: DatabaseKeyException) {
+            val authError = AuthorizationError(
+                kind = AuthorizationErrorKind.DATABASE,
+                message = error.message ?: "Telegram database encryption is unavailable. Account reset is required.",
+                retryable = false,
+            )
+            synchronized(lock) { setAuthorizationErrorLocked(authError, AuthorizationState.Other("database")) }
+            return
+        }
         val request = requestEnvelope("parameters", buildJsonObject {
             put("@type", "setTdlibParameters")
             put("use_test_dc", false)
@@ -302,7 +365,48 @@ class TdLibJsonGateway internal constructor(
             put("application_version", "1.0")
         })
         synchronized(lock) { pendingParametersRequest = request.string("@extra") }
-        send(request)
+        if (!sendOrFail(request)) {
+            synchronized(lock) {
+                if (pendingParametersRequest == request.string("@extra")) {
+                    pendingParametersRequest = null
+                    val error = AuthorizationError(
+                        kind = AuthorizationErrorKind.INITIALIZATION,
+                        message = "Telegram initialization could not start. Check the local configuration and retry.",
+                    )
+                    setAuthorizationErrorLocked(error, AuthorizationState.Other("initialization"))
+                }
+            }
+            return
+        }
+        parametersTimeoutJob?.cancel()
+        parametersTimeoutJob = scope.launch {
+            delay(authActionTimeoutMs)
+            synchronized(lock) {
+                if (pendingParametersRequest != request.string("@extra")) return@synchronized
+                pendingParametersRequest = null
+                val error = AuthorizationError(
+                    kind = AuthorizationErrorKind.NETWORK,
+                    message = "Telegram initialization timed out. Check the network and retry.",
+                )
+                setAuthorizationErrorLocked(error, AuthorizationState.Other("initialization_timeout"))
+            }
+        }
+    }
+
+    private fun setAuthorizationErrorLocked(
+        error: AuthorizationError,
+        state: AuthorizationState = mutableAuthorization.value.state,
+    ) {
+        mutableAuthorization.value = mutableAuthorization.value.copy(
+            state = state,
+            actionPending = false,
+            safeError = error.message,
+            error = error,
+        )
+        mutableState.value = mutableState.value.copy(
+            authorizationState = state,
+            safeError = error.message,
+        )
     }
 
     override fun submit(action: AuthorizationAction): ActionResult {
@@ -326,6 +430,38 @@ class TdLibJsonGateway internal constructor(
                 is AuthorizationAction.SubmitPassword -> if (current is AuthorizationState.WaitingForPassword) request("checkAuthenticationPassword", "password" to action.password) else null
                 is AuthorizationAction.SubmitEmailAddress -> if (current == AuthorizationState.WaitingForEmailAddress) request("setAuthenticationEmailAddress", "email_address" to action.email) else null
                 is AuthorizationAction.SubmitEmailCode -> if (current == AuthorizationState.WaitingForEmailCode) request("checkAuthenticationEmailCode", "code" to buildJsonObject { put("@type", "emailAddressAuthenticationCode"); put("code", action.code) }) else null
+                AuthorizationAction.ResetEmailAddress -> if (current == AuthorizationState.WaitingForEmailCode && mutableAuthorization.value.emailCodeInfo?.canResetEmailAddress == true) buildJsonObject {
+                    put("@type", "resetAuthenticationEmailAddress")
+                } else null
+                AuthorizationAction.RequestQrCode -> if (current == AuthorizationState.WaitingForPhoneNumber) buildJsonObject {
+                    put("@type", "requestQrCodeAuthentication")
+                    put("other_user_ids", buildJsonArray {})
+                } else null
+                is AuthorizationAction.ChangePhone -> if (canChangePhone(current)) buildJsonObject {
+                    put("@type", "setAuthenticationPhoneNumber")
+                    put("phone_number", action.phone)
+                    put("settings", JsonNull)
+                } else null
+                AuthorizationAction.ResendCode -> when (current) {
+                    AuthorizationState.WaitingForCode -> if (mutableAuthorization.value.codeInfo?.canResend != false) {
+                        buildJsonObject { put("@type", "resendAuthenticationCode"); put("reason", JsonNull) }
+                    } else null
+                    AuthorizationState.WaitingForEmailCode -> buildJsonObject {
+                        put("@type", "resendAuthenticationCode")
+                        put("reason", JsonNull)
+                    }
+                    else -> null
+                }
+                is AuthorizationAction.SubmitRegistration -> if (
+                    current is AuthorizationState.WaitingForRegistration &&
+                        action.acceptedTerms &&
+                        action.firstName.trim().isNotEmpty()
+                ) buildJsonObject {
+                    put("@type", "registerUser")
+                    put("first_name", action.firstName.trim())
+                    put("last_name", action.lastName.trim())
+                    put("disable_notification", false)
+                } else null
                 AuthorizationAction.Logout -> if (current == AuthorizationState.Ready) buildJsonObject { put("@type", "logOut") } else null
                 AuthorizationAction.Reset -> null // Delegated above
             } ?: return ActionResult.INVALID_STATE
@@ -335,8 +471,52 @@ class TdLibJsonGateway internal constructor(
             mutableAuthorization.value = mutableAuthorization.value.copy(actionPending = true, safeError = null)
             enveloped
         }
-        send(request)
+        val extra = request.string("@extra").orEmpty()
+        if (!sendOrFail(request)) {
+            synchronized(lock) {
+                if (pendingAuthRequest == extra) {
+                    pendingAuthAction = false
+                    pendingAuthRequest = null
+                    val error = AuthorizationError(
+                        kind = AuthorizationErrorKind.NETWORK,
+                        message = "Telegram did not accept the request. Check the network and retry.",
+                    )
+                    setAuthorizationErrorLocked(error)
+                }
+            }
+            return ActionResult.INVALID_STATE
+        }
+        armAuthActionTimeout(extra)
         return ActionResult.ACCEPTED
+    }
+
+    private fun canChangePhone(state: AuthorizationState): Boolean = when (state) {
+        AuthorizationState.WaitingForPhoneNumber,
+        AuthorizationState.WaitingForCode,
+        is AuthorizationState.WaitingForPassword,
+        AuthorizationState.WaitingForEmailAddress,
+        AuthorizationState.WaitingForEmailCode,
+        is AuthorizationState.WaitingForOtherDevice,
+        is AuthorizationState.WaitingForRegistration,
+        is AuthorizationState.WaitingForPremiumPurchase -> true
+        else -> false
+    }
+
+    private fun armAuthActionTimeout(extra: String) {
+        authActionTimeoutJob?.cancel()
+        authActionTimeoutJob = scope.launch {
+            delay(authActionTimeoutMs)
+            synchronized(lock) {
+                if (pendingAuthRequest != extra) return@synchronized
+                pendingAuthAction = false
+                pendingAuthRequest = null
+                val error = AuthorizationError(
+                    kind = AuthorizationErrorKind.NETWORK,
+                    message = "Telegram request timed out. Check the network and retry.",
+                )
+                setAuthorizationErrorLocked(error)
+            }
+        }
     }
 
     /**
@@ -377,6 +557,7 @@ class TdLibJsonGateway internal constructor(
                     // Step 3: InvalidatingGeneration
                     mutableResetProgress.value = ResetProgress.InvalidatingGeneration
                     identityProvider?.invalidateGeneration()
+                    synchronized(lock) { authResetting = true }
 
                     // Step 4: Clear tracking maps & tombstone old contexts
                     synchronized(lock) {
@@ -475,6 +656,10 @@ class TdLibJsonGateway internal constructor(
                     val errMsg = SensitiveDataRedactor.redact(e.message ?: "Reset failed")
                     mutableResetProgress.value = ResetProgress.Failed(errMsg)
                     mutableResetResult.value = AccountResetResult.Failed(errMsg)
+                } finally {
+                    synchronized(lock) {
+                        if (lifecycle != GatewayLifecycle.CLOSED) authResetting = false
+                    }
                 }
             }
             resetJob = launchedJob
@@ -903,11 +1088,22 @@ class TdLibJsonGateway internal constructor(
     }
 
     private fun handleOk(root: JsonObject) {
-        val request = root.string("@extra").orEmpty().substringBefore(':')
+        val extra = root.string("@extra").orEmpty()
+        val request = extra.substringBefore(':')
+        if (request == "auth" && synchronized(lock) { pendingAuthRequest == extra }) {
+            synchronized(lock) {
+                authActionTimeoutJob?.cancel()
+                authActionTimeoutJob = null
+                pendingAuthAction = false
+                pendingAuthRequest = null
+                mutableAuthorization.value = mutableAuthorization.value.copy(actionPending = false)
+            }
+            return
+        }
         if (!request.startsWith("cancel-")) return
         request.removePrefix("cancel-").toIntOrNull()?.let { fileId ->
             val context = synchronized(lock) {
-                if (pendingCancelRequests[fileId] != root.string("@extra")) return
+                if (pendingCancelRequests[fileId] != extra) return
                 pendingCancelRequests.remove(fileId)
                 pendingDownloadRequests.remove(fileId)
                 pendingCancellations.remove(fileId)
@@ -926,22 +1122,58 @@ class TdLibJsonGateway internal constructor(
     }
 
     private fun handleError(root: JsonObject) {
-        val message = SensitiveDataRedactor.redact(root.string("message") ?: "Telegram request failed")
+        val rawMessage = root.string("message")
+        val message = SensitiveDataRedactor.redact(rawMessage ?: "Telegram request failed")
+        val code = root.int("code")
         val extra = root.string("@extra").orEmpty()
         val request = extra.substringBefore(':')
         when {
             request == "auth" && synchronized(lock) { pendingAuthRequest == extra } -> synchronized(lock) {
                 pendingAuthAction = false
                 pendingAuthRequest = null
-                mutableAuthorization.value = mutableAuthorization.value.copy(actionPending = false, safeError = message)
+                authActionTimeoutJob?.cancel()
+                authActionTimeoutJob = null
+                val error = classifyAuthError(
+                    request = request,
+                    code = code,
+                    rawMessage = rawMessage,
+                    currentState = mutableAuthorization.value.state,
+                )
+                setAuthorizationErrorLocked(error)
             }
             (request == "getMe" || request == "chat" || request == "history") && synchronized(lock) { pendingLibraryRequest == extra } -> {
                 synchronized(lock) { pendingLibraryRequest = null }
-                mutableLibrary.value = LibraryState.Error(message)
+                mutableLibrary.value = LibraryState.Error(
+                    SensitiveDataRedactor.redact(rawMessage ?: "Telegram request failed")
+                )
             }
             request == "parameters" && synchronized(lock) { pendingParametersRequest == extra } -> {
-                synchronized(lock) { pendingParametersRequest = null }
-                mutableAuthorization.value = mutableAuthorization.value.copy(actionPending = false, safeError = message)
+                val retry = synchronized(lock) {
+                    pendingParametersRequest = null
+                    parametersTimeoutJob?.cancel()
+                    parametersTimeoutJob = null
+                    isRetryableParameterError(code, rawMessage) && parameterAttempts < MAX_PARAMETER_ATTEMPTS
+                }
+                if (retry) {
+                    sendTdlibParametersOrExposeMissingConfig()
+                } else {
+                    val error = classifyAuthError(
+                        request = request,
+                        code = code,
+                        rawMessage = rawMessage,
+                        currentState = mutableAuthorization.value.state,
+                    )
+                    synchronized(lock) {
+                        setAuthorizationErrorLocked(
+                            error,
+                            if (error.kind == AuthorizationErrorKind.CONFIGURATION) {
+                                AuthorizationState.MissingConfiguration
+                            } else {
+                                AuthorizationState.Other("initialization")
+                            },
+                        )
+                    }
+                }
             }
             request.startsWith("download-") -> request.removePrefix("download-").toIntOrNull()?.let { fileId ->
                 val context = synchronized(lock) {
@@ -981,6 +1213,68 @@ class TdLibJsonGateway internal constructor(
                 )
                 updateItem(fileId) { it.copy(downloadState = DownloadState.Failed(message), localPath = null) }
             }
+        }
+    }
+
+    private fun isRetryableParameterError(code: Int, message: String?): Boolean {
+        val upper = message.orEmpty().uppercase()
+        return code >= 500 || upper.contains("AUTH_RESTART") || upper.contains("TIMEOUT")
+    }
+
+    private fun classifyAuthError(
+        request: String,
+        code: Int,
+        rawMessage: String?,
+        currentState: AuthorizationState,
+    ): AuthorizationError {
+        val upper = rawMessage.orEmpty().uppercase()
+        return when {
+            code == 406 -> AuthorizationError(
+                AuthorizationErrorKind.INTERNAL,
+                "Telegram rejected this request. Try again or reset the sign-in flow.",
+                retryable = false,
+            )
+            upper.contains("API_ID_INVALID") || upper.contains("API_HASH_INVALID") -> AuthorizationError(
+                AuthorizationErrorKind.CONFIGURATION,
+                "Telegram API ID or hash is invalid. Update telegram-api.properties.",
+                retryable = false,
+            )
+            upper.contains("FLOOD_WAIT") -> AuthorizationError(
+                AuthorizationErrorKind.FLOOD_WAIT,
+                "Telegram asked you to wait before trying again.",
+            )
+            upper.contains("PHONE_NUMBER_INVALID") -> AuthorizationError(
+                AuthorizationErrorKind.INVALID_PHONE,
+                "That phone number is not valid. Enter it in international format.",
+            )
+            upper.contains("PHONE_CODE_EXPIRED") -> AuthorizationError(
+                AuthorizationErrorKind.CODE_EXPIRED,
+                "That authentication code expired. Request a new code.",
+            )
+            upper.contains("PHONE_CODE_INVALID") || upper.contains("CODE_INVALID") -> AuthorizationError(
+                if (currentState == AuthorizationState.WaitingForEmailCode) AuthorizationErrorKind.EMAIL_CODE_INVALID else AuthorizationErrorKind.CODE_INVALID,
+                "That authentication code is not valid. Check it and try again.",
+            )
+            upper.contains("PASSWORD_HASH_INVALID") || upper.contains("PASSWORD_INVALID") -> AuthorizationError(
+                AuthorizationErrorKind.PASSWORD_INVALID,
+                "That two-step verification password is not valid.",
+            )
+            currentState is AuthorizationState.WaitingForRegistration -> AuthorizationError(
+                AuthorizationErrorKind.REGISTRATION_INVALID,
+                "Telegram rejected the registration details. Check the names and try again.",
+            )
+            request == "parameters" -> AuthorizationError(
+                AuthorizationErrorKind.INITIALIZATION,
+                "Telegram initialization failed. Check the API configuration and network.",
+            )
+            upper.contains("NETWORK") || upper.contains("TIMEOUT") || code >= 500 -> AuthorizationError(
+                AuthorizationErrorKind.NETWORK,
+                "Telegram is temporarily unavailable. Check the network and retry.",
+            )
+            else -> AuthorizationError(
+                AuthorizationErrorKind.INTERNAL,
+                "Telegram sign-in failed. Check the details and retry.",
+            )
         }
     }
 
@@ -1029,7 +1323,11 @@ class TdLibJsonGateway internal constructor(
             pendingDownloadRequests.clear()
             pendingCancelRequests.clear()
             pendingAuthRequest = null
+            authActionTimeoutJob?.cancel()
+            authActionTimeoutJob = null
             pendingParametersRequest = null
+            parametersTimeoutJob?.cancel()
+            parametersTimeoutJob = null
             pendingLibraryRequest = null
         }
         cancelledRequests.forEach {

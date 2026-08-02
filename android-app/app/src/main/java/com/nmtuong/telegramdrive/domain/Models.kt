@@ -10,10 +10,21 @@ sealed interface AuthorizationState {
   data object WaitingForTdlibParameters : AuthorizationState
   data object WaitingForPhoneNumber : AuthorizationState
   data object WaitingForCode : AuthorizationState
-  data class WaitingForPassword(val hint: String = "") : AuthorizationState
+  data class WaitingForPassword(
+    val hint: String = "",
+    val hasRecoveryEmailAddress: Boolean = false,
+    val recoveryEmailAddressPattern: String = "",
+  ) : AuthorizationState
   data object WaitingForEmailAddress : AuthorizationState
   data object WaitingForEmailCode : AuthorizationState
   data class WaitingForOtherDevice(val link: String) : AuthorizationState
+  data class WaitingForRegistration(val terms: RegistrationTerms) : AuthorizationState
+  data class WaitingForPremiumPurchase(
+    val storeProductId: String,
+    val premiumDayCount: Int,
+    val supportEmailAddress: String,
+    val supportEmailSubject: String,
+  ) : AuthorizationState
   data object Ready : AuthorizationState
   data object LoggingOut : AuthorizationState
   data object Closing : AuthorizationState
@@ -27,16 +38,85 @@ sealed interface AuthorizationAction {
   data class SubmitPassword(val password: String) : AuthorizationAction
   data class SubmitEmailAddress(val email: String) : AuthorizationAction
   data class SubmitEmailCode(val code: String) : AuthorizationAction
+  data object ResetEmailAddress : AuthorizationAction
+  data object RequestQrCode : AuthorizationAction
+  data class ChangePhone(val phone: String) : AuthorizationAction
+  data object ResendCode : AuthorizationAction
+  data class SubmitRegistration(
+    val firstName: String,
+    val lastName: String,
+    val acceptedTerms: Boolean,
+  ) : AuthorizationAction
   data object Logout : AuthorizationAction
   data object Reset : AuthorizationAction
 }
 
 enum class ActionResult { ACCEPTED, INVALID_STATE, DUPLICATE, MISSING_CONFIGURATION }
 
+enum class AuthorizationErrorKind {
+  CONFIGURATION,
+  INITIALIZATION,
+  NETWORK,
+  INVALID_PHONE,
+  FLOOD_WAIT,
+  CODE_EXPIRED,
+  CODE_INVALID,
+  PASSWORD_INVALID,
+  EMAIL_CODE_INVALID,
+  REGISTRATION_INVALID,
+  DATABASE,
+  UNSUPPORTED,
+  INTERNAL,
+}
+
+data class AuthorizationError(
+  val kind: AuthorizationErrorKind,
+  val message: String,
+  val retryable: Boolean = true,
+)
+
+data class AuthenticationCodeTypeInfo(
+  val name: String,
+  val length: Int = 0,
+  val hint: String? = null,
+)
+
+data class AuthenticationCodeInfo(
+  val phoneNumber: String,
+  val type: AuthenticationCodeTypeInfo,
+  val nextType: AuthenticationCodeTypeInfo? = null,
+  val timeoutSeconds: Int = 0,
+) {
+  val canResend: Boolean get() = nextType != null && timeoutSeconds <= 0
+}
+
+data class EmailAuthenticationCodeInfo(
+  val emailAddressPattern: String,
+  val length: Int = 0,
+  val canResetEmailAddress: Boolean = false,
+  val resetWaitSeconds: Int = 0,
+)
+
+data class RegistrationTerms(
+  val id: String,
+  val text: String,
+  val minimumUserAge: Int = 0,
+  val showPopup: Boolean = false,
+)
+
+data class AuthorizationStateSnapshot(
+  val state: AuthorizationState,
+  val codeInfo: AuthenticationCodeInfo? = null,
+  val emailCodeInfo: EmailAuthenticationCodeInfo? = null,
+)
+
 data class AuthorizationSession(
   val state: AuthorizationState = AuthorizationState.Unknown,
   val actionPending: Boolean = false,
   val safeError: String? = null,
+  val error: AuthorizationError? = null,
+  val codeInfo: AuthenticationCodeInfo? = null,
+  val emailCodeInfo: EmailAuthenticationCodeInfo? = null,
 )
 
 data class DiagnosticsState(
@@ -219,4 +299,3 @@ sealed interface ResetProgress {
   data object Completed : ResetProgress
   data class Failed(val reason: String, val retryable: Boolean = true) : ResetProgress
 }
-

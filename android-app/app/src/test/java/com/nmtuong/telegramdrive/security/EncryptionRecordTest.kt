@@ -84,4 +84,16 @@ class EncryptionRecordTest {
         assertFalse(exception.message!!.contains("cipher"))
         assertTrue(exception.message!!.contains("reset") || exception.message!!.contains("required"))
     }
+
+    @Test
+    fun `database key encoding uses standard Base64 and migrates legacy URL-safe value`() {
+        val legacy = "-__v"
+        val standard = "+//v"
+
+        assertTrue(legacy.contains('-') || legacy.contains('_'))
+        assertEquals(standard, normalizeTdLibDatabaseKey(legacy))
+        assertEquals(standard, normalizeTdLibDatabaseKey(standard))
+        assertFalse(normalizeTdLibDatabaseKey(legacy).contains('-'))
+        assertFalse(normalizeTdLibDatabaseKey(legacy).contains('_'))
+    }
 }

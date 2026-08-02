@@ -7,6 +7,7 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.security.KeyStore
 import java.security.SecureRandom
+import java.util.Base64 as JavaBase64
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -229,7 +230,7 @@ class DatabaseEncryptionManager(
             val iv = Base64.decode(record.ivBase64, Base64.NO_WRAP)
             cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(TAG_LENGTH_BIT, iv))
             val ciphertext = Base64.decode(record.ciphertextBase64, Base64.NO_WRAP)
-            String(cipher.doFinal(ciphertext), Charsets.UTF_8)
+            normalizeTdLibDatabaseKey(String(cipher.doFinal(ciphertext), Charsets.UTF_8))
         } catch (e: DatabaseKeyException) {
             throw e
         } catch (e: Exception) {
@@ -243,7 +244,8 @@ class DatabaseEncryptionManager(
         // Generate random 32-byte data key
         val dataKeyBytes = ByteArray(32)
         SecureRandom().nextBytes(dataKeyBytes)
-        val plainDataKey = Base64.encodeToString(dataKeyBytes, Base64.NO_WRAP or Base64.URL_SAFE)
+        // TDLib JSON `bytes` fields use standard Base64, not Base64url.
+        val plainDataKey = Base64.encodeToString(dataKeyBytes, Base64.NO_WRAP)
 
         // Get or generate Keystore wrapping key
         val secretKey = getOrCreateKeystoreKey()
@@ -340,3 +342,22 @@ data class EncryptionRecord(
  * Message never contains key material, ciphertext, IV, or decrypted values.
  */
 class DatabaseKeyException(message: String) : Exception(message)
+
+/**
+ * Canonicalizes both the current standard-Base64 key and the legacy URL-safe
+ * representation without changing the underlying random database key bytes.
+ */
+internal fun normalizeTdLibDatabaseKey(value: String): String {
+    val decoder = if ('-' in value || '_' in value) {
+        JavaBase64.getUrlDecoder()
+    } else {
+        JavaBase64.getDecoder()
+    }
+    return try {
+        val decoded = decoder.decode(value)
+        require(decoded.isNotEmpty())
+        JavaBase64.getEncoder().encodeToString(decoded)
+    } catch (_: IllegalArgumentException) {
+        throw DatabaseKeyException("TDLib database encryption key is not valid Base64. Account reset is required.")
+    }
+}

@@ -102,6 +102,26 @@ class FakeTelegramRepository(
             is AuthorizationAction.SubmitPassword -> if (authorization.value.state is AuthorizationState.WaitingForPassword) AuthorizationState.Ready else null
             is AuthorizationAction.SubmitEmailAddress -> if (authorization.value.state == AuthorizationState.WaitingForEmailAddress) AuthorizationState.WaitingForEmailCode else null
             is AuthorizationAction.SubmitEmailCode -> if (authorization.value.state == AuthorizationState.WaitingForEmailCode) AuthorizationState.Ready else null
+            AuthorizationAction.ResetEmailAddress -> if (authorization.value.state == AuthorizationState.WaitingForEmailCode) AuthorizationState.WaitingForPhoneNumber else null
+            AuthorizationAction.RequestQrCode -> if (authorization.value.state == AuthorizationState.WaitingForPhoneNumber) AuthorizationState.WaitingForOtherDevice("tg://login?token=fake") else null
+            is AuthorizationAction.ChangePhone -> if (
+                authorization.value.state !in setOf(
+                    AuthorizationState.Unknown,
+                    AuthorizationState.MissingConfiguration,
+                    AuthorizationState.WaitingForTdlibParameters,
+                    AuthorizationState.Ready,
+                    AuthorizationState.Closed,
+                )
+            ) AuthorizationState.WaitingForCode else null
+            AuthorizationAction.ResendCode -> when (authorization.value.state) {
+                AuthorizationState.WaitingForCode -> AuthorizationState.WaitingForCode
+                AuthorizationState.WaitingForEmailCode -> AuthorizationState.WaitingForEmailCode
+                else -> null
+            }
+            is AuthorizationAction.SubmitRegistration -> if (
+                authorization.value.state is AuthorizationState.WaitingForRegistration &&
+                    action.acceptedTerms && action.firstName.isNotBlank()
+            ) AuthorizationState.Ready else null
             AuthorizationAction.Logout -> if (authorization.value.state == AuthorizationState.Ready) AuthorizationState.Closed else null
             AuthorizationAction.Reset -> AuthorizationState.Closed
         } ?: return ActionResult.INVALID_STATE
