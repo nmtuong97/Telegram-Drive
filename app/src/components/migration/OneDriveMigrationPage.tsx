@@ -5,15 +5,17 @@ import { SetupSection } from './SetupSection';
 import { ProgressPanel } from './ProgressPanel';
 import { ActivityStream } from './ActivityStream';
 import { FileTable } from './FileTable';
-import { MigrationJobDetail, ItemProgressPayload, ItemCompletePayload, MigrationActivity, MsAccountInfo, OneDriveItem } from '../../types';
+import { MigrationJob, MigrationJobDetail, ItemProgressPayload, ItemCompletePayload, MigrationActivity, MsAccountInfo, OneDriveItem } from '../../types';
 import { useTranslation } from 'react-i18next';
-import { Play, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Play, RefreshCw, AlertTriangle, ListFilter } from 'lucide-react';
 
 export const OneDriveMigrationPage: React.FC = () => {
     const { t } = useTranslation();
     
     // States
     const [msAccount, setMsAccount] = useState<MsAccountInfo | null>(null);
+    const [jobs, setJobs] = useState<MigrationJob[]>([]);
+    const [selectedJobId, setSelectedJobId] = useState<number | 'new' | null>(null);
     const [currentDetail, setCurrentDetail] = useState<MigrationJobDetail | null>(null);
     const [activeProgresses, setActiveProgresses] = useState<Record<number, ItemProgressPayload>>({});
     const [activities, setActivities] = useState<MigrationActivity[]>([]);
@@ -36,16 +38,32 @@ export const OneDriveMigrationPage: React.FC = () => {
                 // MS Account status
                 const msStatus = await invoke<MsAccountInfo | null>('cmd_migration_ms_status');
                 if (isMounted) setMsAccount(msStatus);
+
+                // Fetch jobs history
+                const jobList = await invoke<MigrationJob[]>('cmd_migration_list_jobs');
+                if (isMounted) setJobs(jobList || []);
                 
-                let jobId = currentDetail?.job?.id;
-                if (!jobId) {
-                    jobId = await invoke<number | null>('cmd_migration_get_resumable_job') ?? undefined;
+                let targetId: number | undefined;
+                if (typeof selectedJobId === 'number') {
+                    targetId = selectedJobId;
+                } else if (selectedJobId === null) {
+                    const resumable = await invoke<number | null>('cmd_migration_get_resumable_job');
+                    if (resumable) {
+                        targetId = resumable;
+                        if (isMounted) setSelectedJobId(resumable);
+                    } else if (jobList && jobList.length > 0) {
+                        targetId = jobList[0].id;
+                        if (isMounted) setSelectedJobId(jobList[0].id);
+                    }
                 }
-                if (jobId) {
-                    const detail = await invoke<MigrationJobDetail>('cmd_migration_get_status', { jobId });
+
+                if (targetId) {
+                    const detail = await invoke<MigrationJobDetail>('cmd_migration_get_status', { jobId: targetId });
                     if (isMounted) {
                         setCurrentDetail(detail);
                     }
+                } else if (selectedJobId === 'new') {
+                    if (isMounted) setCurrentDetail(null);
                 }
             } catch (err: any) {
                 console.error("Status fetch error", err);
@@ -58,7 +76,7 @@ export const OneDriveMigrationPage: React.FC = () => {
             isMounted = false;
             clearInterval(interval);
         };
-    }, [currentDetail?.job?.id]);
+    }, [selectedJobId]);
 
     // Tauri Event listeners for progress
     useEffect(() => {
@@ -147,7 +165,7 @@ export const OneDriveMigrationPage: React.FC = () => {
 
     const handleStart = async () => {
         const resumableJob = currentDetail?.job;
-        if (resumableJob && ['stopped', 'waiting_for_quota'].includes(resumableJob.state)) {
+        if (resumableJob && ['stopped', 'waiting_for_quota', 'failed'].includes(resumableJob.state)) {
             setLoading(true);
             setError(null);
             try {
@@ -176,6 +194,7 @@ export const OneDriveMigrationPage: React.FC = () => {
                 telegramDestinationName: destName,
                 localBackupDir: localDir
             });
+            setSelectedJobId(jobId);
             const detail = await invoke<MigrationJobDetail>('cmd_migration_get_status', { jobId });
             setCurrentDetail(detail);
         } catch (e: any) {
@@ -200,18 +219,65 @@ export const OneDriveMigrationPage: React.FC = () => {
 
     const handleRetry = async () => {
         if (!currentDetail?.job?.id) return;
+        setLoading(true);
+        setError(null);
         try {
             await invoke('cmd_migration_retry_failed', { jobId: currentDetail.job.id });
+            const detail = await invoke<MigrationJobDetail>('cmd_migration_get_status', { jobId: currentDetail.job.id });
+            setCurrentDetail(detail);
+        } catch (e: any) {
+            setError(e.toString());
+        } finally {
+            setLoading(false);
+        }
+    };
+    
+    const handleExportCsv = async () => {
+        if (!currentDetail?.files) {
+            setError("No files to export");
+            return;
+        }
+        
+        try {
+            const header = ["ID", "Name", "Path", "Size", "Stage", "Last Error", "Updated At"];
+            const escapeCsv = (str: string | null | undefined) => {
+                if (!str) return '""';
+                const s = String(str);
+                if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+                    return `"${s.replace(/"/g, '""')}"`;
+                }
+                return s;
+            };
+
+            const rows = currentDetail.files.map(f => [
+                f.id,
+                escapeCsv(f.name),
+                escapeCsv(f.path),
+                f.size,
+                escapeCsv(f.pipeline_stage),
+                escapeCsv(f.last_error),
+                new Date(f.updated_at * 1000).toISOString()
+            ].join(","));
+
+            const csvContent = [header.join(","), ...rows].join("\n");
+            
+            // Add timestamp to filename to prevent accidental overrides
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const targetPath = `/Volumes/DATASTORE/Temo/migration_queue_export_${timestamp}.csv`;
+            
+            await invoke('cmd_migration_export_queue_csv', { 
+                csvContent, 
+                filePath: targetPath 
+            });
+            
+            alert(`Đã lưu file CSV thành công tại:\n${targetPath}`);
         } catch (e: any) {
             setError(e.toString());
         }
     };
     
-    // We determine if we are in Setup phase or Execution phase
-    const showSetup = !currentDetail
-        || !msAccount
-        || currentDetail.job.state === 'failed'
-        || currentDetail.job.state === 'completed';
+    // Determine if we show Setup or Job execution/detail
+    const showSetup = selectedJobId === 'new' || !currentDetail;
 
     return (
         <div className="h-full flex flex-col bg-slate-950 text-slate-200 overflow-hidden">
@@ -227,6 +293,33 @@ export const OneDriveMigrationPage: React.FC = () => {
                         </h1>
                         <p className="text-xs text-slate-500 font-medium">Seamless cloud to telegram sync</p>
                     </div>
+                </div>
+
+                {/* Job Selector Dropdown */}
+                <div className="flex items-center gap-2 bg-slate-900/90 px-3 py-1.5 rounded-lg border border-slate-800">
+                    <ListFilter className="w-4 h-4 text-blue-400" />
+                    <span className="text-xs font-semibold text-slate-400">Chọn Tiến Trình:</span>
+                    <select
+                        value={selectedJobId === 'new' ? 'new' : (selectedJobId ?? currentDetail?.job?.id ?? '')}
+                        onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === 'new') {
+                                setSelectedJobId('new');
+                                setCurrentDetail(null);
+                            } else {
+                                const id = Number(val);
+                                setSelectedJobId(id);
+                            }
+                        }}
+                        className="bg-slate-950 text-slate-200 text-xs rounded px-2 py-1 border border-slate-700 focus:outline-none focus:border-blue-500 font-medium"
+                    >
+                        <option value="new">+ Tạo tiến trình mới (New Migration)</option>
+                        {jobs.map((j) => (
+                            <option key={j.id} value={j.id}>
+                                Job #{j.id} [{j.state.toUpperCase()}] - {j.source_folder_path} ➔ {j.telegram_destination_name} ({j.completed_items}/{j.discovered_items} files)
+                            </option>
+                        ))}
+                    </select>
                 </div>
             </header>
 
@@ -286,8 +379,14 @@ export const OneDriveMigrationPage: React.FC = () => {
                             
                             {/* File Table / Queue */}
                             <div className="flex-1 min-h-[300px] bg-slate-900/60 rounded-xl border border-slate-800/60 overflow-hidden flex flex-col">
-                                <div className="p-4 border-b border-slate-800/60 bg-slate-900/80">
+                                <div className="p-4 border-b border-slate-800/60 bg-slate-900/80 flex justify-between items-center">
                                     <h3 className="font-semibold text-slate-300">File Queue</h3>
+                                    <button 
+                                        onClick={handleExportCsv}
+                                        className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium rounded-md transition-colors border border-slate-700"
+                                    >
+                                        Export CSV
+                                    </button>
                                 </div>
                                 <div className="flex-1 overflow-hidden">
                                     {currentDetail?.files && <FileTable files={currentDetail.files} onRetryItem={(itemId) => { console.log("Retry", itemId); }} />}

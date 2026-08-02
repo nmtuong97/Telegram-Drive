@@ -1,0 +1,206 @@
+[
+  {
+    "text": "Saved Messages",
+    "center": "[319,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "text": "Source",
+    "center": "[109,408]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[640,540]",
+    "bounds": "[48,468][1232,612]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[640,1692]",
+    "bounds": "[48,648][1232,2736]",
+    "key": 3506402
+  },
+  {
+    "text": "Log out",
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "state": [
+      "checked"
+    ],
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[681,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1085,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Saved Messages",
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Design Assets",
+    "center": "[681,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Project Documents",
+    "center": "[1085,540]",
+    "key": 3506402
+  },
+  {
+    "text": "mountain.jpg",
+    "center": "[229,720]",
+    "key": 3506402
+  },
+  {
+    "text": "image",
+    "center": "[137,798]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[233,912]",
+    "key": 3506402
+  },
+  {
+    "text": "demo.mp4",
+    "center": "[202,1116]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,1194]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,1308]",
+    "key": 3506402
+  },
+  {
+    "text": "mountain-duplicate.jpg",
+    "center": "[339,1512]",
+    "key": 3506402
+  },
+  {
+    "text": "image",
+    "center": "[137,1590]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[233,1704]",
+    "key": 3506402
+  },
+  {
+    "text": "trailer.mp4",
+    "center": "[203,1908]",
+    "key": 3506402
+  },
+  {
+    "text": "video",
+    "center": "[130,1986]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,2100]",
+    "key": 3506402
+  },
+  {
+    "text": "notes.txt",
+    "center": "[182,2304]",
+    "key": 3506402
+  },
+  {
+    "text": "document",
+    "center": "[170,2382]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,2496]",
+    "key": 3506402
+  },
+  {
+    "text": "demo.gif",
+    "center": "[182,2700]",
+    "key": 3506402
+  },
+  {
+    "text": "Preview",
+    "center": "[233,912]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,1308]",
+    "key": 3506402
+  },
+  {
+    "text": "Preview",
+    "center": "[233,1704]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,2100]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,2496]",
+    "key": 3506402
+  }
+]

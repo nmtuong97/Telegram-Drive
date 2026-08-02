@@ -65,6 +65,7 @@ pub mod mp4_utils;
 pub mod server;
 pub mod share_routes;
 pub mod transcode;
+pub mod temp_storage;
 pub mod upload_service;
 
 /// Generate a random 32-character hex token for streaming server auth
@@ -1061,9 +1062,11 @@ pub fn run() {
             migration::commands::cmd_migration_stop,
             migration::commands::cmd_migration_get_status,
             migration::commands::cmd_migration_get_resumable_job,
+            migration::commands::cmd_migration_list_jobs,
             migration::commands::cmd_migration_resume,
             migration::commands::cmd_migration_retry_failed,
             migration::commands::cmd_migration_reset_database,
+            migration::commands::cmd_migration_export_queue_csv,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

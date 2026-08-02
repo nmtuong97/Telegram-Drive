@@ -1,0 +1,101 @@
+[
+  {
+    "text": "Design Assets",
+    "center": "[277,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "text": "Source",
+    "center": "[109,408]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "scrollable"
+    ],
+    "center": "[640,540]",
+    "bounds": "[48,468][1232,612]",
+    "key": 3506402
+  },
+  {
+    "text": "Log out",
+    "center": "[1123,276]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "state": [
+      "checked"
+    ],
+    "center": "[681,540]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1085,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Saved Messages",
+    "center": "[259,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Design Assets",
+    "center": "[681,540]",
+    "key": 3506402
+  },
+  {
+    "text": "Project Documents",
+    "center": "[1085,540]",
+    "key": 3506402
+  },
+  {
+    "text": "theme.mp3",
+    "center": "[210,720]",
+    "key": 3506402
+  },
+  {
+    "text": "audio",
+    "center": "[132,798]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[251,912]",
+    "key": 3506402
+  },
+  {
+    "text": "Download",
+    "center": "[251,912]",
+    "key": 3506402
+  }
+]

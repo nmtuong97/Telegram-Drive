@@ -67,6 +67,7 @@ describe('OneDriveMigrationPage session resume', () => {
             if (command === 'cmd_migration_ms_status') {
                 return { account_name: 'Test', account_email: 'test@example.com' };
             }
+            if (command === 'cmd_migration_list_jobs') return [detail('stopped').job];
             if (command === 'cmd_migration_get_resumable_job') return 7;
             if (command === 'cmd_migration_get_status') {
                 const resumed = invokeMock.mock.calls.some(([name]) => name === 'cmd_migration_resume');

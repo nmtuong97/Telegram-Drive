@@ -37,7 +37,7 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
         : 0;
 
     const isActive = job.state === 'running';
-    const isResumable = job.state === 'stopped' || job.state === 'waiting_for_quota';
+    const isResumable = job.state === 'stopped' || job.state === 'waiting_for_quota' || job.state === 'failed';
 
     return (
         <div className="bg-slate-900/60 rounded-xl border border-slate-800 p-5 space-y-5">

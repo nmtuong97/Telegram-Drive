@@ -1,0 +1,49 @@
+[
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[111,96]",
+    "key": 3506402
+  },
+  {
+    "content-desc": "PDF preview",
+    "center": "[640,1404]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable"
+    ],
+    "center": "[204,2736]",
+    "key": 3506402
+  },
+  {
+    "text": "Page 1 of 1",
+    "center": "[680,2736]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable"
+    ],
+    "center": "[1115,2736]",
+    "key": 3506402
+  },
+  {
+    "text": "Back",
+    "center": "[111,96]",
+    "key": 3506402
+  },
+  {
+    "text": "Previous",
+    "center": "[204,2736]",
+    "key": 3506402
+  },
+  {
+    "text": "Next",
+    "center": "[1115,2736]",
+    "key": 3506402
+  }
+]
