@@ -27,6 +27,9 @@ full-download fallback to satisfy Phase 3.
 - `VideoStreamingCoordinatorTest` uses a 2 MiB fake file, requests a 4 KiB initial
   range, reads before completion, seeks to byte 1,048,576, reads that range, and
   verifies temporary cleanup on close.
+- The coordinator tests also reject a TDLib-complete snapshot whose local file is
+  shorter than the expected size, and prove that a seek supersedes a waiting range
+  request immediately rather than waiting for the range timeout.
 - The fake Room/runtime wiring reaches the gallery and uses a Media3 factory for
   video items; it is not evidence of TDLib behavior.
 - Connected instrumentation now also proves repository crash-resume/incremental

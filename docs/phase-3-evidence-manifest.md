@@ -14,11 +14,12 @@ real-account gate. A file is not described as passing unless it was actually pro
 | Working branch | `agent/android-phase-3` |
 | Official plan | [`android-app/MASTER_PLAN.md`](../android-app/MASTER_PLAN.md) |
 | Detailed plan | [`docs/phase-3-plan.md`](phase-3-plan.md) |
-| Final implementation commit | `3329d13` (`feat(android): implement phase 3 saved media gallery`). |
+| Initial implementation commit | `3329d13` (`feat(android): implement phase 3 saved media gallery`). |
 | Test coverage commit | `ace373a` (`test(android): add phase 3 media and streaming coverage`). |
 | Evidence/documentation commit | `9fd8b0f`, `e3c0a4c`, `bea623f`. |
 | Latest lifecycle hardening commit | `3d0a15a` (`fix(android): harden phase 3 account and media lifecycle`). |
 | Latest account-isolation/gallery-flow commit | `730e2b1` (`fix(android): scope gallery flows to account identity`). |
+| Latest implementation commit | `3466de3` (`fix(android): cancel stale video range waits`). |
 
 ## Commands and exit codes
 
@@ -28,11 +29,11 @@ All Gradle invocations were run one at a time through
 
 | Command | Exit code | Notes |
 | --- | ---: | --- |
-| `:app:testDebugUnitTest -PtelegramDataSource=fake` | 0 | 124 tests passed, 0 failures/errors; includes account-generation, range-prefix, cancellation, and late-update coverage. |
+| `:app:testDebugUnitTest -PtelegramDataSource=fake` | 0 | 126 tests passed, 0 failures/errors/skips; includes account-generation, range-prefix, complete-file-size, cancellation, and late-update coverage. |
 | `:app:lintDebug` | 0 | Lint passed; warnings only. |
 | `:app:assembleDebug -PtelegramDataSource=fake` | 0 | Final fake APK produced; SHA-256 is recorded below. |
 | `:app:assembleDebug` (real default) | 0 | Real APK assembled; launch requires Telegram sign-in. |
-| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | 0 | 12 tests on `Pixel_9_Pro` API 36, 0 failures/errors; includes account-scoped Paging rebinding. |
+| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | 0 | 12 tests on `TelegramDrive_Small` API 36, 0 failures/errors/skips; includes account-scoped Paging rebinding. |
 
 After the final Gradle gates, the workspace was checked for Gradle daemon/test-worker
 processes; a stale daemon was terminated and no test worker remained.
@@ -47,7 +48,7 @@ Device: `Pixel_9_Pro` AVD, serial `emulator-5554`, API 36.
 - `android run --apks=<debug APK> --device=emulator-5554 --activity=com.nmtuong.telegramdrive.MainActivity` installed and launched the fake APK.
 - `android layout --pretty --output=docs/evidence/phase-3-final-fake-layout.json` captured the final fake hierarchy.
 - `android screen capture --output=docs/evidence/phase-3-final-fake.png` captured the final fake preflight.
-- Final fake-device preflight hierarchy and screenshot are [`phase-3-final-fake-layout.json`](evidence/phase-3-final-fake-layout.json) and [`phase-3-final-fake.png`](evidence/phase-3-final-fake.png). Authenticated gallery/video flows remain covered by connected tests and earlier fake gallery/video captures.
+- Current fake-device preflight hierarchy and screenshot are [`phase-3-final-layout.json`](evidence/phase-3-final-layout.json) and [`phase-3-final-runtime.png`](evidence/phase-3-final-runtime.png). The captured screen is sign-in because no fake session was seeded; authenticated gallery/video flows remain covered by connected tests and earlier fake gallery/video captures.
 - Resumed fake-device sign-in hierarchy and screenshot are [`phase-3-resumed-runtime-layout.json`](evidence/phase-3-resumed-runtime-layout.json) and [`phase-3-resumed-runtime.png`](evidence/phase-3-resumed-runtime.png); no Telegram credentials were entered.
 - Latest fake-device Media3 video preview is [`phase-3-current-video.png`](evidence/phase-3-current-video.png).
 - Real preflight launch reached Telegram sign-in; hierarchy and screenshot are
@@ -100,5 +101,5 @@ entry. The scope is not silently downgraded to full-download playback.
 ## APK
 
 - Expected final path: `android-app/app/build/outputs/apk/debug/app-debug.apk`.
-- Final fake APK size: `70,112,262` bytes.
-- Final SHA-256: `e3507f8b9ce1683064d37b78375d137e18672b63221a0e8554e3b361a2e051c1`.
+- Final fake APK size: `70,112,344` bytes.
+- Final SHA-256: `4147ea63f73434d8fd0196e7b41df5b4d85ddd9290d8de0d5740fc9abcda1f89`.
