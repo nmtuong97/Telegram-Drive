@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
   entities = [SavedMediaEntity::class, CachedFileEntity::class, SyncStateEntity::class, PlaybackPositionEntity::class],
-  version = 3,
+  version = 4,
   exportSchema = true,
 )
 abstract class MediaDatabase : RoomDatabase() {
@@ -23,6 +23,7 @@ abstract class MediaDatabase : RoomDatabase() {
       val noBackupPath = context.noBackupFilesDir.resolve(name).absolutePath
       return Room.databaseBuilder(context.applicationContext, MediaDatabase::class.java, noBackupPath)
         .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+        .addMigrations(MIGRATION_3_4)
         .build()
     }
 
@@ -48,6 +49,14 @@ abstract class MediaDatabase : RoomDatabase() {
             PRIMARY KEY(accountId, databaseGeneration, stableFileIdentity)
           )
           """.trimIndent(),
+        )
+      }
+    }
+
+    val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+          "ALTER TABLE saved_media ADD COLUMN expectedSizeBytes INTEGER NOT NULL DEFAULT 0",
         )
       }
     }

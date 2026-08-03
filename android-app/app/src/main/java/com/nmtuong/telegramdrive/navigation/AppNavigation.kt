@@ -1,13 +1,16 @@
 package com.nmtuong.telegramdrive.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nmtuong.telegramdrive.bootstrap.AppContainer
@@ -41,19 +44,36 @@ fun AppNavigation(container: AppContainer) {
     GalleryViewModel(container.savedMediaRepository, container.mediaAccessCoordinator)
   }
   val authorization by authorizationViewModel.state.collectAsStateWithLifecycle()
+  val currentIdentity by container.identityProvider.currentIdentity.collectAsStateWithLifecycle()
   var preview by remember { mutableStateOf<PreviewTarget?>(null) }
   var videoRequest by rememberSaveable(stateSaver = VideoPlaybackRequestSaver) { mutableStateOf<VideoPlaybackRequest?>(null) }
+  var playbackSessionId by rememberSaveable { mutableLongStateOf(0L) }
   var showGallery by rememberSaveable { mutableStateOf(true) }
+  val galleryGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
+
+  LaunchedEffect(authorization.state, currentIdentity, videoRequest?.accountIdentity) {
+    val requestIdentity = videoRequest?.accountIdentity
+    if (authorization.state != AuthorizationState.Ready ||
+      (requestIdentity != null && currentIdentity != requestIdentity)
+    ) {
+      videoRequest = null
+      preview = null
+      showGallery = true
+      container.mediaAccessCoordinator.cancelForAccount()
+    }
+  }
 
   if (authorization.state != AuthorizationState.Ready) {
     AuthorizationScreen(authorizationViewModel)
     return
   }
 
+  val activeVideoRequest = videoRequest?.takeIf { it.accountIdentity == currentIdentity }
   when {
-    videoRequest != null -> VideoPreviewScreen(
-      request = checkNotNull(videoRequest),
+    activeVideoRequest != null -> VideoPreviewScreen(
+      request = activeVideoRequest,
       mediaAccess = container.mediaAccessCoordinator,
+      playbackSessionId = playbackSessionId,
       onBack = { videoRequest = null },
     )
     preview != null -> when (val target = checkNotNull(preview)) {
@@ -68,9 +88,11 @@ fun AppNavigation(container: AppContainer) {
     else -> if (showGallery) {
       GalleryScreen(
         viewModel = galleryViewModel,
+        gridState = galleryGridState,
         onOpenSourceBrowser = { showGallery = false },
         onOpenMedia = { entity, path, thumbnailPath ->
           if (entity.mediaType == "VIDEO") {
+            playbackSessionId += 1L
             videoRequest = VideoPlaybackRequest(
               accountIdentity = AccountSessionIdentity(entity.accountId, entity.databaseGeneration),
               stableFileIdentity = entity.originalStableFileIdentity,
@@ -80,7 +102,7 @@ fun AppNavigation(container: AppContainer) {
               displayName = entity.stableDisplayName,
               durationSeconds = entity.durationSeconds.toLong(),
               mimeType = entity.mimeType,
-              expectedSizeBytes = null,
+              expectedSizeBytes = entity.expectedSizeBytes.takeIf { it > 0L },
               localPath = path.takeIf { it.isNotBlank() },
               thumbnailPath = thumbnailPath,
               minithumbnailData = entity.minithumbnailData,

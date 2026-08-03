@@ -27,7 +27,6 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -53,7 +52,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,6 +84,7 @@ import java.util.Locale
 @Composable
 fun GalleryScreen(
   viewModel: GalleryViewModel,
+  gridState: LazyGridState,
   onOpenSourceBrowser: () -> Unit,
   onOpenMedia: (SavedMediaEntity, String, String?) -> Unit,
 ) {
@@ -95,7 +94,6 @@ fun GalleryScreen(
   val syncResult by viewModel.syncResult.collectAsStateWithLifecycle(initialValue = null)
   val thumbnailPaths by viewModel.thumbnailPaths.collectAsStateWithLifecycle()
   val openState by viewModel.openState.collectAsStateWithLifecycle()
-  val gridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
   var searchText by remember { mutableStateOf(query.search) }
   val syncPresentation = syncPresentation(syncState, syncResult)
   val hasActiveQuery = query.search.isNotBlank() || query.mediaFilter != GalleryMediaFilter.ALL || query.localOnly

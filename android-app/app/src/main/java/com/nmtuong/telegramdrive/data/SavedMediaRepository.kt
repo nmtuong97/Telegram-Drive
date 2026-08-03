@@ -548,6 +548,7 @@ class SavedMediaRepository(
       width = width,
       height = height,
       durationSeconds = durationSeconds,
+      expectedSizeBytes = sizeBytes.coerceAtLeast(0L),
       telegramFileId = fileId,
       originalStableFileIdentity = stableFileIdentity,
       thumbnailFileId = thumbnailFileId,

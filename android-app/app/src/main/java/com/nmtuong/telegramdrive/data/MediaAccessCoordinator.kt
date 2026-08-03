@@ -143,7 +143,9 @@ class MediaAccessCoordinator(
     if (identityProvider.currentIdentity.value != request.accountIdentity) return null
     verifiedCompleteLocalVideoPath(request.localPath, request.expectedSizeBytes)?.let { return it }
     gateway.getFileSnapshot(request.telegramFileId)?.let { snapshot ->
-      if (isCompleteReadable(snapshot, request.stableFileIdentity)) return snapshot.localPath
+      if (isCompleteReadable(snapshot, request.stableFileIdentity, request.expectedSizeBytes)) {
+        return snapshot.localPath
+      }
     }
     val cached = database.cachedFileDao().find(
       request.accountIdentity.accountId,
@@ -153,9 +155,12 @@ class MediaAccessCoordinator(
     return cached
       ?.takeIf { it.observedState == CachedFileState.COMPLETE.name && it.fileType == CachedFileType.VIDEO_COMPLETE.name }
       ?.localPath
-      ?.let(::File)
-      ?.takeIf { it.isFile && it.canRead() && it.length() > 0L }
-      ?.absolutePath
+      ?.let { path ->
+        verifiedCompleteLocalVideoPath(
+          path = path,
+          expectedSizeBytes = request.expectedSizeBytes ?: cached.observedSizeBytes.takeIf { it > 0L },
+        )
+      }
   }
 
   suspend fun loadPlaybackPosition(request: VideoPlaybackRequest): Long? =
@@ -237,6 +242,18 @@ class MediaAccessCoordinator(
     transfer?.coordinator?.close()
   }
 
+  /** Force-closes all readers for one playback session before its player is released. */
+  fun closeVideoPlayback(request: VideoPlaybackRequest) {
+    val transfer = synchronized(activeVideoTransfers) {
+      activeVideoTransfers.remove(AccessKey(request.accountIdentity, request.stableFileIdentity))
+    }
+    transfer?.coordinator?.close()
+  }
+
+  internal fun activeVideoTransferCountForTests(): Int = synchronized(activeVideoTransfers) {
+    activeVideoTransfers.size
+  }
+
   private suspend fun clearVideoCache(entity: SavedMediaEntity, identity: AccountSessionIdentity) {
     clearVideoCache(identity, entity.originalStableFileIdentity)
   }
@@ -285,7 +302,11 @@ class MediaAccessCoordinator(
     return completed
   }
 
-  private fun isCompleteReadable(snapshot: TdLibFileSnapshot, stableIdentity: String): Boolean =
+  private fun isCompleteReadable(
+    snapshot: TdLibFileSnapshot,
+    stableIdentity: String,
+    expectedSizeBytes: Long? = null,
+  ): Boolean =
     snapshot.isDownloadingCompleted &&
       snapshot.isReadable &&
       (snapshot.stableFileIdentity == null || snapshot.stableFileIdentity == stableIdentity) &&
@@ -293,7 +314,10 @@ class MediaAccessCoordinator(
         File(path).let { file ->
           file.isFile && file.canRead() &&
             file.length() > 0L &&
-            (snapshot.expectedSizeBytes <= 0L || file.length() >= snapshot.expectedSizeBytes)
+            file.length() >= maxOf(
+              snapshot.expectedSizeBytes.coerceAtLeast(0L),
+              expectedSizeBytes?.coerceAtLeast(0L) ?: 0L,
+            )
         }
       } == true
 

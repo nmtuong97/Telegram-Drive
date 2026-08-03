@@ -96,11 +96,15 @@ class MediaDatabaseMigrationTest {
     }
 
     val migrated = Room.databaseBuilder(context, MediaDatabase::class.java, databaseFile.absolutePath)
-      .addMigrations(MediaDatabase.MIGRATION_1_2, MediaDatabase.MIGRATION_2_3)
+      .addMigrations(
+        MediaDatabase.MIGRATION_1_2,
+        MediaDatabase.MIGRATION_2_3,
+        MediaDatabase.MIGRATION_3_4,
+      )
       .build()
     val supportDatabase = migrated.openHelper.writableDatabase
 
-    assertEquals(3, supportDatabase.version)
+    assertEquals(4, supportDatabase.version)
     supportDatabase.query("SELECT accountId, phase, backfillCursor FROM sync_state").use { cursor ->
       assertTrue(cursor.moveToFirst())
       assertEquals(7L, cursor.getLong(0))
@@ -110,6 +114,11 @@ class MediaDatabaseMigrationTest {
     supportDatabase.query("PRAGMA table_info(sync_state)").use { cursor ->
       var found = false
       while (cursor.moveToNext()) found = found || cursor.getString(1) == "lastSuccessfulCatchUpAtEpochMillis"
+      assertTrue(found)
+    }
+    supportDatabase.query("PRAGMA table_info(saved_media)").use { cursor ->
+      var found = false
+      while (cursor.moveToNext()) found = found || cursor.getString(1) == "expectedSizeBytes"
       assertTrue(found)
     }
     supportDatabase.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'playback_position'").use { cursor ->

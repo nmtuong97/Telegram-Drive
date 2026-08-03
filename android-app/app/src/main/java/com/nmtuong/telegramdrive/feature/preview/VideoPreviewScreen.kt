@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Button
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -35,7 +36,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -63,7 +67,9 @@ import androidx.media3.ui.PlayerView
 import com.nmtuong.telegramdrive.R
 import com.nmtuong.telegramdrive.domain.VideoPlaybackRequest
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 @Composable
 @OptIn(UnstableApi::class)
@@ -71,36 +77,42 @@ fun VideoPreviewScreen(
   request: VideoPlaybackRequest,
   mediaAccess: com.nmtuong.telegramdrive.data.MediaAccessCoordinator,
   onBack: () -> Unit,
-  viewModel: VideoPlayerViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
-    key = request.playbackKey,
-    factory = VideoPlayerViewModel.Factory(request, mediaAccess),
-  ),
+  playbackSessionId: Long = 0L,
+  viewModel: VideoPlayerViewModel? = null,
 ) {
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
-  val player by viewModel.player.collectAsStateWithLifecycle()
-  val state by viewModel.uiState.collectAsStateWithLifecycle()
+  // This owner is remembered by one open route, not stored in the Activity's
+  // ViewModelStore under a stable file key.
+  val owner = viewModel ?: remember(request, playbackSessionId) {
+    VideoPlayerViewModel(request, mediaAccess)
+  }
+  val player by owner.player.collectAsStateWithLifecycle()
+  val state by owner.uiState.collectAsStateWithLifecycle()
 
-  LaunchedEffect(viewModel, context) { viewModel.initialize(context) }
-  DisposableEffect(viewModel, lifecycleOwner) {
+  LaunchedEffect(owner, context) { owner.initialize(context) }
+  DisposableEffect(owner, lifecycleOwner) {
     val observer = LifecycleEventObserver { _, event ->
       when (event) {
-        Lifecycle.Event.ON_STOP -> viewModel.onStop()
-        Lifecycle.Event.ON_START -> viewModel.onStart()
+        Lifecycle.Event.ON_STOP -> owner.onStop()
+        Lifecycle.Event.ON_START -> owner.onStart()
         else -> Unit
       }
     }
     lifecycleOwner.lifecycle.addObserver(observer)
     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
   }
+  DisposableEffect(owner) {
+    onDispose { owner.closePlayback() }
+  }
   BackHandler {
-    viewModel.closePlayback()
+    owner.closePlayback()
     onBack()
   }
   LaunchedEffect(state.phase, state.controlsVisible) {
     if (state.phase == VideoPlaybackPhase.Playing && state.controlsVisible) {
       delay(3_500L)
-      viewModel.setControlsVisible(false)
+      owner.setControlsVisible(false)
     }
   }
 
@@ -117,6 +129,7 @@ fun VideoPreviewScreen(
         }
       },
       update = { view -> view.player = player },
+      onRelease = { view -> view.player = null },
       modifier = Modifier.fillMaxSize(),
     )
 
@@ -129,10 +142,10 @@ fun VideoPreviewScreen(
         .fillMaxSize()
         .pointerInput(player, state.phase) {
           detectTapGestures(
-            onTap = { viewModel.setControlsVisible(!state.controlsVisible) },
+            onTap = { owner.setControlsVisible(!state.controlsVisible) },
             onDoubleTap = { offset ->
-              viewModel.seekBy(if (offset.x < size.width / 2f) -10_000L else 10_000L)
-              viewModel.setControlsVisible(true)
+              owner.seekBy(if (offset.x < size.width / 2f) -10_000L else 10_000L)
+              owner.setControlsVisible(true)
             },
           )
         },
@@ -152,7 +165,7 @@ fun VideoPreviewScreen(
         TopControls(
           title = request.displayName,
           onBack = {
-            viewModel.closePlayback()
+            owner.closePlayback()
             onBack()
           },
         )
@@ -172,11 +185,19 @@ fun VideoPreviewScreen(
         }
         BottomControls(
           state = state,
-          onPlayPause = viewModel::togglePlayPause,
-          onSeekBack = { viewModel.seekBy(-10_000L) },
-          onSeekForward = { viewModel.seekBy(10_000L) },
-          onSeek = viewModel::seekTo,
-          onReplay = viewModel::replay,
+          controlsEnabled = state.phase !in setOf(
+            VideoPlaybackPhase.Opening,
+            VideoPlaybackPhase.PreparingSource,
+            VideoPlaybackPhase.InitialBuffering,
+            VideoPlaybackPhase.RecoverableError,
+            VideoPlaybackPhase.FatalError,
+            VideoPlaybackPhase.Closed,
+          ),
+          onPlayPause = owner::togglePlayPause,
+          onSeekBack = { owner.seekBy(-10_000L) },
+          onSeekForward = { owner.seekBy(10_000L) },
+          onSeek = owner::seekTo,
+          onReplay = owner::replay,
         )
       }
     }
@@ -190,9 +211,9 @@ fun VideoPreviewScreen(
     if (state.phase == VideoPlaybackPhase.RecoverableError || state.phase == VideoPlaybackPhase.FatalError) {
       ErrorOverlay(
         kind = state.error,
-        onRetry = { viewModel.retry(context) },
+        onRetry = { owner.retry(context) },
         onBack = {
-          viewModel.closePlayback()
+          owner.closePlayback()
           onBack()
         },
       )
@@ -231,6 +252,7 @@ private fun TopControls(title: String, onBack: () -> Unit) {
 @Composable
 private fun BottomControls(
   state: VideoPlayerUiState,
+  controlsEnabled: Boolean,
   onPlayPause: () -> Unit,
   onSeekBack: () -> Unit,
   onSeekForward: () -> Unit,
@@ -245,6 +267,14 @@ private fun BottomControls(
   val seekForwardDescription = stringResource(R.string.seek_forward_10)
   val replayDescription = stringResource(R.string.replay)
   val duration = state.durationMs.coerceAtLeast(1L)
+  var scrubPositionMs by remember(state.durationMs) {
+    mutableStateOf(state.positionMs.coerceIn(0L, duration))
+  }
+  var isScrubbing by remember { mutableStateOf(false) }
+  LaunchedEffect(state.positionMs, state.durationMs, isScrubbing) {
+    if (!isScrubbing) scrubPositionMs = state.positionMs.coerceIn(0L, duration)
+  }
+  val displayedPositionMs = if (isScrubbing) scrubPositionMs else state.positionMs.coerceIn(0L, duration)
   Column(
     modifier = Modifier
       .fillMaxWidth()
@@ -253,9 +283,17 @@ private fun BottomControls(
       .padding(horizontal = 16.dp, vertical = 12.dp),
   ) {
     Slider(
-      value = state.positionMs.coerceIn(0L, duration).toFloat(),
-      onValueChange = { onSeek(it.toLong()) },
+      value = displayedPositionMs.toFloat(),
+      onValueChange = {
+        isScrubbing = true
+        scrubPositionMs = it.toLong().coerceIn(0L, duration)
+      },
+      onValueChangeFinished = {
+        if (isScrubbing) onSeek(scrubPositionMs)
+        isScrubbing = false
+      },
       valueRange = 0f..duration.toFloat(),
+      enabled = controlsEnabled && state.durationMs > 0L,
       modifier = Modifier
         .fillMaxWidth()
         .semantics { contentDescription = seekPositionDescription },
@@ -267,6 +305,7 @@ private fun BottomControls(
     ) {
       IconButton(
         onClick = onPlayPause,
+        enabled = controlsEnabled,
         modifier = Modifier.semantics { contentDescription = playPauseDescription },
       ) {
         PlayerGlyph(
@@ -274,20 +313,20 @@ private fun BottomControls(
           Color.White,
         )
       }
-      IconButton(onClick = onSeekBack, modifier = Modifier.semantics { contentDescription = seekBackDescription }) {
+      IconButton(onClick = onSeekBack, enabled = controlsEnabled, modifier = Modifier.semantics { contentDescription = seekBackDescription }) {
         Text("-10", color = Color.White, style = MaterialTheme.typography.labelLarge)
       }
-      IconButton(onClick = onSeekForward, modifier = Modifier.semantics { contentDescription = seekForwardDescription }) {
+      IconButton(onClick = onSeekForward, enabled = controlsEnabled, modifier = Modifier.semantics { contentDescription = seekForwardDescription }) {
         Text("+10", color = Color.White, style = MaterialTheme.typography.labelLarge)
       }
       Text(
-        text = "${formatClock(state.positionMs)} / ${formatClock(state.durationMs)}",
+        text = "${formatClock(displayedPositionMs)} / ${formatClock(state.durationMs)}",
         color = Color.White,
         style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier.weight(1f),
       )
       if (state.phase == VideoPlaybackPhase.Ended) {
-        IconButton(onClick = onReplay, modifier = Modifier.semantics { contentDescription = replayDescription }) {
+        IconButton(onClick = onReplay, enabled = controlsEnabled, modifier = Modifier.semantics { contentDescription = replayDescription }) {
           Text(stringResource(R.string.replay), color = Color.White, style = MaterialTheme.typography.labelLarge)
         }
       }
@@ -338,13 +377,9 @@ private fun ErrorOverlay(
         Text(stringResource(message), color = Color.White, style = MaterialTheme.typography.titleMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           if (isRetryableVideoPlaybackError(kind)) {
-            Surface(onClick = onRetry, color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(8.dp)) {
-              Text(stringResource(R.string.retry), modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-            }
+            Button(onClick = onRetry) { Text(stringResource(R.string.retry)) }
           }
-          Surface(onClick = onBack, color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(8.dp)) {
-            Text(stringResource(R.string.back), modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-          }
+          androidx.compose.material3.TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
         }
       }
     }
@@ -353,17 +388,25 @@ private fun ErrorOverlay(
 
 @Composable
 private fun VideoPoster(request: VideoPlaybackRequest) {
-  val bitmap = remember(request.thumbnailPath, request.minithumbnailData) {
-    request.thumbnailPath?.let { BitmapFactory.decodeFile(it) }
-      ?: request.minithumbnailData?.let { encoded ->
-        runCatching {
-          val bytes = Base64.decode(encoded, Base64.DEFAULT)
-          BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        }.getOrNull()
-      }
+  val bitmap by produceState<android.graphics.Bitmap?>(
+    initialValue = null,
+    key1 = request.thumbnailPath,
+    key2 = request.minithumbnailData,
+  ) {
+    value = withContext(Dispatchers.IO) {
+      request.thumbnailPath?.let { BitmapFactory.decodeFile(it) }
+        ?: request.minithumbnailData?.let { encoded ->
+          runCatching {
+            val bytes = Base64.decode(encoded, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+          }.getOrNull()
+        }
+    }
   }
   if (bitmap != null) {
-    Image(bitmap = bitmap.asImageBitmap(), contentDescription = request.displayName, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+    bitmap?.let {
+      Image(bitmap = it.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+    }
   } else {
     Box(Modifier.fillMaxSize().background(Color.Black))
   }
@@ -428,8 +471,9 @@ fun VideoPreviewScreen(
     BackHandler(onBack = onBack)
     Box(Modifier.fillMaxSize().background(Color.Black)) {
       AndroidView(
-        factory = { PlayerView(it).apply { useController = true; this.player = player } },
-        update = { it.player = player },
+         factory = { PlayerView(it).apply { useController = true; this.player = player } },
+         update = { it.player = player },
+         onRelease = { it.player = null },
         modifier = Modifier.fillMaxSize(),
       )
     }

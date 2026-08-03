@@ -62,4 +62,33 @@ class VideoPlaybackRulesTest {
     )
     assertFalse(isRetryableVideoPlaybackError(VideoPlaybackErrorKind.UnsupportedFormatOrDecoder))
   }
+
+  @Test
+  fun mapsNestedTimeoutCauseWhenTopLevelMessageIsGeneric() {
+    val nested = java.net.SocketTimeoutException("remote read timed out")
+    val topLevel = IllegalStateException("Playback failed", nested)
+
+    assertEquals(
+      VideoPlaybackErrorKind.TimeoutOrSlowNetwork,
+      classifyVideoPlaybackFailure(PlaybackException.ERROR_CODE_UNSPECIFIED, "Playback failed", topLevel),
+    )
+  }
+
+  @Test
+  fun mapsNestedSessionChangeCauseWithoutExposingRawCause() {
+    val nested = IllegalStateException("Telegram account session changed")
+    val topLevel = IllegalStateException("Playback failed", nested)
+
+    assertEquals(
+      VideoPlaybackErrorKind.TelegramSessionChanged,
+      classifyVideoPlaybackFailure(PlaybackException.ERROR_CODE_UNSPECIFIED, "Playback failed", topLevel),
+    )
+  }
+
+  @Test
+  fun navigationCancellationIsNotAPlaybackError() {
+    val cancellation = java.util.concurrent.CancellationException("Video range superseded")
+
+    assertTrue(isExpectedVideoPlaybackCancellation(cancellation))
+  }
 }
