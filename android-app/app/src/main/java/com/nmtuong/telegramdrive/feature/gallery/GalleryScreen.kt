@@ -85,6 +85,10 @@ import java.util.Locale
 fun GalleryScreen(
   viewModel: GalleryViewModel,
   gridState: LazyGridState,
+  restoreAnchorIndex: Int,
+  restoreAnchorOffset: Int,
+  shouldRestoreAnchor: Boolean,
+  onAnchorRestored: () -> Unit,
   onOpenSourceBrowser: () -> Unit,
   onOpenMedia: (SavedMediaEntity, String, String?) -> Unit,
 ) {
@@ -113,6 +117,13 @@ fun GalleryScreen(
         viewModel.consumeOpenState()
       }
       else -> Unit
+    }
+  }
+
+  LaunchedEffect(shouldRestoreAnchor, restoreAnchorIndex, restoreAnchorOffset, items.itemCount) {
+    if (shouldRestoreAnchor && items.itemCount > restoreAnchorIndex) {
+      gridState.scrollToItem(restoreAnchorIndex, restoreAnchorOffset)
+      onAnchorRestored()
     }
   }
 
@@ -415,7 +426,9 @@ private fun GalleryGrid(
   LazyVerticalGrid(
     columns = GridCells.Adaptive(minSize = 156.dp),
     state = state,
-    modifier = modifier.fillMaxWidth(),
+    modifier = modifier
+      .fillMaxWidth()
+      .semantics { contentDescription = "Saved media grid" },
     contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
     horizontalArrangement = Arrangement.spacedBy(10.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp),

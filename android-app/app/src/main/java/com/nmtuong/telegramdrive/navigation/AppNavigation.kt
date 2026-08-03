@@ -3,14 +3,16 @@ package com.nmtuong.telegramdrive.navigation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nmtuong.telegramdrive.bootstrap.AppContainer
@@ -31,6 +33,7 @@ import com.nmtuong.telegramdrive.feature.preview.AudioPreviewScreen
 import com.nmtuong.telegramdrive.feature.preview.PdfPreviewScreen
 import com.nmtuong.telegramdrive.feature.preview.TextPreviewScreen
 import com.nmtuong.telegramdrive.feature.preview.ExternalPreviewScreen
+import kotlinx.coroutines.flow.collect
 
 @Composable
 fun AppNavigation(container: AppContainer) {
@@ -49,7 +52,21 @@ fun AppNavigation(container: AppContainer) {
   var videoRequest by rememberSaveable(stateSaver = VideoPlaybackRequestSaver) { mutableStateOf<VideoPlaybackRequest?>(null) }
   var playbackSessionId by rememberSaveable { mutableLongStateOf(0L) }
   var showGallery by rememberSaveable { mutableStateOf(true) }
-  val galleryGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
+  var galleryAnchorRestorePending by rememberSaveable { mutableStateOf(false) }
+  var galleryAnchorIndex by rememberSaveable { mutableIntStateOf(0) }
+  var galleryAnchorOffset by rememberSaveable { mutableIntStateOf(0) }
+  val galleryGridState = rememberLazyGridState(
+    initialFirstVisibleItemIndex = galleryAnchorIndex,
+    initialFirstVisibleItemScrollOffset = galleryAnchorOffset,
+  )
+
+  LaunchedEffect(galleryGridState) {
+    snapshotFlow { galleryGridState.firstVisibleItemIndex to galleryGridState.firstVisibleItemScrollOffset }
+      .collect { (index, offset) ->
+        galleryAnchorIndex = index
+        galleryAnchorOffset = offset
+      }
+  }
 
   LaunchedEffect(authorization.state, currentIdentity, videoRequest?.accountIdentity) {
     val requestIdentity = videoRequest?.accountIdentity
@@ -89,8 +106,15 @@ fun AppNavigation(container: AppContainer) {
       GalleryScreen(
         viewModel = galleryViewModel,
         gridState = galleryGridState,
+        restoreAnchorIndex = galleryAnchorIndex,
+        restoreAnchorOffset = galleryAnchorOffset,
+        shouldRestoreAnchor = galleryAnchorRestorePending,
+        onAnchorRestored = { galleryAnchorRestorePending = false },
         onOpenSourceBrowser = { showGallery = false },
         onOpenMedia = { entity, path, thumbnailPath ->
+          galleryAnchorIndex = galleryGridState.firstVisibleItemIndex
+          galleryAnchorOffset = galleryGridState.firstVisibleItemScrollOffset
+          galleryAnchorRestorePending = true
           if (entity.mediaType == "VIDEO") {
             playbackSessionId += 1L
             videoRequest = VideoPlaybackRequest(

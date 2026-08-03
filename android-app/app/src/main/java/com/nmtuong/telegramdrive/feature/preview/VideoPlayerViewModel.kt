@@ -1,19 +1,11 @@
 package com.nmtuong.telegramdrive.feature.preview
 
 import android.content.Context
-import android.net.Uri
-import android.os.SystemClock
-import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DataSource
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.nmtuong.telegramdrive.data.MediaAccessCoordinator
 import com.nmtuong.telegramdrive.data.video.VideoStreamingDiagnostics
 import com.nmtuong.telegramdrive.domain.VideoPlaybackRequest
@@ -191,27 +183,46 @@ internal fun isExpectedVideoPlaybackCancellation(cause: Throwable?, details: Str
     "navigation cancellation" in normalized
 }
 
-@androidx.annotation.OptIn(UnstableApi::class)
-class VideoPlayerViewModel(
+class VideoPlayerViewModel internal constructor(
   val request: VideoPlaybackRequest,
-  private val mediaAccess: MediaAccessCoordinator,
+  private val playbackGateway: VideoPlaybackGateway,
+  private val engineFactory: VideoPlayerEngineFactory = Media3VideoPlayerEngineFactory,
+  private val clock: VideoPlaybackClock = AndroidVideoPlaybackClock,
 ) : ViewModel() {
-  private val _player = MutableStateFlow<ExoPlayer?>(null)
-  val player: StateFlow<ExoPlayer?> = _player.asStateFlow()
+  constructor(
+    request: VideoPlaybackRequest,
+    mediaAccess: MediaAccessCoordinator,
+  ) : this(request, MediaAccessVideoPlaybackGateway(mediaAccess))
+
+  private val _player = MutableStateFlow<Player?>(null)
+  val player: StateFlow<Player?> = _player.asStateFlow()
   private val _uiState = MutableStateFlow(VideoPlayerUiState())
   val uiState: StateFlow<VideoPlayerUiState> = _uiState.asStateFlow()
   private val generation = AtomicLong(0L)
+  private var engine: VideoPlayerEngine? = null
+  private var currentListener: VideoPlayerEngineListener? = null
   private var prepareJob: Job? = null
   private var positionJob: Job? = null
   private var resumeOnForeground = false
   private var closed = false
   private var playerStartElapsedMs = 0L
-  private val positionWriter = PlaybackPositionWriter(viewModelScope) { snapshot ->
-    mediaAccess.savePlaybackPosition(request, snapshot.positionMs, snapshot.durationMs)
-  }
-  private val listener = object : Player.Listener {
+  private val positionWriter = PlaybackPositionWriter(
+    scope = viewModelScope,
+    persist = { snapshot ->
+      playbackGateway.savePosition(request, snapshot.positionMs, snapshot.durationMs)
+    },
+    onPersisted = VideoStreamingDiagnostics::positionWritten,
+  )
+
+  private fun createListener(
+    owner: VideoPlayerEngine,
+    ownerGeneration: Long,
+  ): VideoPlayerEngineListener = object : VideoPlayerEngineListener {
+    private fun isCurrentOwner(): Boolean =
+      engine === owner && generation.get() == ownerGeneration && !closed
+
     override fun onPlaybackStateChanged(playbackState: Int) {
-      val current = _player.value ?: return
+      if (!isCurrentOwner()) return
       _uiState.update { state ->
         state.copy(
           phase = when (playbackState) {
@@ -219,18 +230,19 @@ class VideoPlayerViewModel(
               VideoStreamingDiagnostics.rebuffered()
               VideoPlaybackPhase.Rebuffering
             } else VideoPlaybackPhase.InitialBuffering
-            Player.STATE_READY -> if (current.isPlaying) VideoPlaybackPhase.Playing else VideoPlaybackPhase.Paused
+            Player.STATE_READY -> if (owner.isPlaying) VideoPlaybackPhase.Playing else VideoPlaybackPhase.Paused
             Player.STATE_ENDED -> VideoPlaybackPhase.Ended
             else -> state.phase
           },
-          positionMs = current.currentPosition.coerceAtLeast(0L),
-          durationMs = current.duration.takeIf { it > 0L } ?: request.durationSeconds * 1_000L,
+          positionMs = owner.currentPosition.coerceAtLeast(0L),
+          durationMs = owner.duration.takeIf { it > 0L } ?: request.durationSeconds * 1_000L,
           pendingSeekPositionMs = if (playbackState == Player.STATE_READY) null else state.pendingSeekPositionMs,
         )
       }
     }
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
+      if (!isCurrentOwner()) return
       _uiState.update { state ->
         state.copy(
           phase = when {
@@ -246,25 +258,24 @@ class VideoPlayerViewModel(
     }
 
     override fun onRenderedFirstFrame() {
-      VideoStreamingDiagnostics.firstFrameRendered(SystemClock.elapsedRealtime() - playerStartElapsedMs)
+      if (!isCurrentOwner()) return
+      VideoStreamingDiagnostics.firstFrameRendered(clock.elapsedRealtime() - playerStartElapsedMs)
       _uiState.update { it.copy(firstFrameRendered = true) }
     }
 
-    override fun onPositionDiscontinuity(
-      oldPosition: Player.PositionInfo,
-      newPosition: Player.PositionInfo,
-      reason: Int,
-    ) {
+    override fun onPositionDiscontinuity(positionMs: Long, reason: Int) {
+      if (!isCurrentOwner()) return
       if (reason == Player.DISCONTINUITY_REASON_SEEK) {
-        _uiState.update { it.copy(positionMs = newPosition.positionMs.coerceAtLeast(0L)) }
+        _uiState.update { it.copy(positionMs = positionMs.coerceAtLeast(0L)) }
       }
     }
 
-    override fun onPlayerError(error: PlaybackException) {
-      if (isExpectedVideoPlaybackCancellation(error)) {
+    override fun onPlayerError(error: VideoPlayerEngineError) {
+      if (!isCurrentOwner()) return
+      if (isExpectedVideoPlaybackCancellation(error.cause, error.details)) {
         _uiState.update { state ->
           state.copy(
-            phase = if (_player.value?.isPlaying == true) VideoPlaybackPhase.Playing else VideoPlaybackPhase.Paused,
+            phase = if (owner.isPlaying) VideoPlaybackPhase.Playing else VideoPlaybackPhase.Paused,
             error = null,
             pendingSeekPositionMs = null,
           )
@@ -286,13 +297,23 @@ class VideoPlayerViewModel(
   }
 
   fun initialize(context: Context) {
-    if (closed || _player.value != null) return
+    initializeEngine(engineFactory.create(context.applicationContext))
+  }
+
+  internal fun initializeForTests(created: VideoPlayerEngine) {
+    initializeEngine(created)
+  }
+
+  private fun initializeEngine(created: VideoPlayerEngine) {
+    if (closed || engine != null) return
     val currentGeneration = generation.incrementAndGet()
-    playerStartElapsedMs = SystemClock.elapsedRealtime()
-    val created = ExoPlayer.Builder(context.applicationContext).build()
+    playerStartElapsedMs = clock.elapsedRealtime()
     VideoPlayerDiagnostics.playerCreated()
+    val listener = createListener(created, currentGeneration)
+    currentListener = listener
+    engine = created
     created.addListener(listener)
-    _player.value = created
+    _player.value = created.player
     _uiState.value = VideoPlayerUiState(
       phase = VideoPlaybackPhase.Opening,
       durationMs = request.durationSeconds * 1_000L,
@@ -302,31 +323,30 @@ class VideoPlayerViewModel(
     prepareJob = viewModelScope.launch {
       try {
         _uiState.update { it.copy(phase = VideoPlaybackPhase.PreparingSource) }
-        val savedPosition = mediaAccess.loadPlaybackPosition(request)
+        val savedPosition = playbackGateway.loadPosition(request)
         val resume = resumePositionMs(savedPosition, request.durationSeconds * 1_000L)
         _uiState.update { it.copy(resumePositionMs = resume) }
-        val localPath = mediaAccess.resolveVideoLocalPath(request)
-        if (currentGeneration != generation.get() || closed) return@launch
+        val localPath = playbackGateway.resolveLocalPath(request)
+        if (currentGeneration != generation.get() || closed || engine !== created) return@launch
         if (localPath != null) {
-          created.setMediaItem(MediaItem.fromUri(Uri.fromFile(java.io.File(localPath))))
+          created.setLocalSource(localPath)
           _uiState.update { it.copy(sourceLabel = "local") }
         } else {
-          val mediaItem = MediaItem.Builder()
-            .setUri("tdlib://${request.playbackKey}".toUri())
-            .setMimeType(request.mimeType)
-            .build()
-          val sourceFactory: DataSource.Factory = mediaAccess.videoDataSourceFactory(request)
-          created.setMediaSource(ProgressiveMediaSource.Factory(sourceFactory).createMediaSource(mediaItem))
+          created.setStreamingSource(
+            uri = "tdlib://${request.playbackKey}",
+            mimeType = request.mimeType,
+            dataSourceFactory = playbackGateway.streamingDataSourceFactory(request),
+          )
           _uiState.update { it.copy(sourceLabel = "streaming") }
         }
-        if (currentGeneration != generation.get() || closed) return@launch
+        if (currentGeneration != generation.get() || closed || engine !== created) return@launch
         if (resume > 0L) created.seekTo(resume)
         created.playWhenReady = true
         created.prepare()
       } catch (cancelled: CancellationException) {
         throw cancelled
       } catch (_: Exception) {
-        if (currentGeneration == generation.get() && !closed) {
+        if (currentGeneration == generation.get() && !closed && engine === created) {
           _uiState.update { it.copy(phase = VideoPlaybackPhase.FatalError, error = VideoPlaybackErrorKind.UnknownPlaybackFailure) }
         }
       }
@@ -336,8 +356,8 @@ class VideoPlayerViewModel(
         var nextPersistenceAt = 0L
         while (isActive && !closed) {
           delay(250L)
-          val current = _player.value ?: continue
-          val now = SystemClock.elapsedRealtime()
+          val current = engine ?: continue
+          val now = clock.elapsedRealtime()
           _uiState.update { state ->
             state.copy(
               positionMs = current.currentPosition.coerceAtLeast(0L),
@@ -354,7 +374,7 @@ class VideoPlayerViewModel(
   }
 
   fun togglePlayPause() {
-    val current = _player.value ?: return
+    val current = engine ?: return
     if (current.isPlaying) {
       current.pause()
       persistPosition(current, force = true)
@@ -365,7 +385,7 @@ class VideoPlayerViewModel(
   }
 
   fun seekTo(positionMs: Long) {
-    val current = _player.value ?: return
+    val current = engine ?: return
     val target = positionMs.coerceIn(0L, current.duration.takeIf { it > 0L } ?: Long.MAX_VALUE)
     val wasPlaying = current.isPlaying
     val resolvesImmediately = !wasPlaying || current.bufferedPosition >= target
@@ -386,41 +406,49 @@ class VideoPlayerViewModel(
   }
 
   fun seekBy(deltaMs: Long) {
-    val current = _player.value ?: return
+    val current = engine ?: return
     seekTo(current.currentPosition + deltaMs)
   }
 
-  fun replay() = seekTo(0L).also { _player.value?.play() }
+  fun replay() = seekTo(0L).also { engine?.play() }
 
   fun setControlsVisible(visible: Boolean) {
     _uiState.update { it.copy(controlsVisible = visible) }
   }
 
   fun onStop() {
-    val current = _player.value
+    val current = engine
     resumeOnForeground = current?.isPlaying == true
     current?.pause()
     current?.let { persistPosition(it, force = true) }
   }
 
   fun onStart() {
-    if (resumeOnForeground && _uiState.value.phase != VideoPlaybackPhase.Ended) _player.value?.play()
+    if (resumeOnForeground && _uiState.value.phase != VideoPlaybackPhase.Ended) engine?.play()
     resumeOnForeground = false
   }
 
   fun retry(context: Context) {
+    retryWith { engineFactory.create(context.applicationContext) }
+  }
+
+  internal fun retryForTests() {
+    retryWith { engineFactory.create(null) }
+  }
+
+  private fun retryWith(createEngine: () -> VideoPlayerEngine) {
     if (closed || !canRetryPlayback(_uiState.value.phase)) return
-    _player.value?.let { persistPosition(it, force = true) }
+    engine?.let { persistPosition(it, force = true) }
     prepareJob?.cancel()
     releasePlayer()
     closed = false
     _uiState.value = _uiState.value.copy(phase = VideoPlaybackPhase.Opening, error = null, firstFrameRendered = false)
-    initialize(context)
+    initializeEngine(createEngine())
   }
 
   fun closePlayback() {
     if (closed) return
-    _player.value?.let { persistPosition(it, force = true) }
+    engine?.let { persistPosition(it, force = true) }
     closed = true
     prepareJob?.cancel()
     positionJob?.cancel()
@@ -430,7 +458,7 @@ class VideoPlayerViewModel(
     _uiState.update { it.copy(phase = VideoPlaybackPhase.Closed) }
   }
 
-  private fun persistPosition(current: ExoPlayer, force: Boolean) {
+  private fun persistPosition(current: VideoPlayerEngine, force: Boolean) {
     positionWriter.enqueue(
       PlaybackPositionSnapshot(
         positionMs = current.currentPosition.coerceAtLeast(0L),
@@ -441,27 +469,29 @@ class VideoPlayerViewModel(
   }
 
   private fun releasePlayer() {
-    val current = _player.value
+    val current = engine
     if (current != null) {
-      current.removeListener(listener)
+      currentListener?.let(current::removeListener)
+      currentListener = null
       current.stop()
       current.release()
+      engine = null
       _player.value = null
       VideoPlayerDiagnostics.playerReleased()
     }
-    mediaAccess.closeVideoPlayback(request)
+    playbackGateway.closePlayback(request)
   }
 
-  private fun classify(error: PlaybackException): VideoPlaybackErrorKind {
+  private fun classify(error: VideoPlayerEngineError): VideoPlaybackErrorKind {
     return classifyVideoPlaybackFailure(
       errorCode = error.errorCode,
-      details = "${error.errorCode} ${error.message.orEmpty()}",
+      details = "${error.errorCode} ${error.details}",
       cause = error.cause,
     )
   }
 
   override fun onCleared() {
-    _player.value?.let { persistPosition(it, force = true) }
+    engine?.let { persistPosition(it, force = true) }
     closed = true
     prepareJob?.cancel()
     positionJob?.cancel()

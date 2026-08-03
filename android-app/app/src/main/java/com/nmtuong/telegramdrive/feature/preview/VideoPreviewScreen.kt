@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,6 +71,8 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+
+internal const val VIDEO_CONTROLS_AUTO_HIDE_DELAY_MS = 3_500L
 
 @Composable
 @OptIn(UnstableApi::class)
@@ -111,7 +114,7 @@ fun VideoPreviewScreen(
   }
   LaunchedEffect(state.phase, state.controlsVisible) {
     if (shouldAutoHideControls(state.phase, state.controlsVisible)) {
-      delay(3_500L)
+      delay(VIDEO_CONTROLS_AUTO_HIDE_DELAY_MS)
       owner.setControlsVisible(false)
     }
   }
@@ -223,15 +226,14 @@ internal fun VideoGestureLayer(
   onSetControlsVisible: (Boolean) -> Unit,
   onSeekBy: (Long) -> Unit,
 ) {
-  // Visibility changes after a completed tap or auto-hide; restarting this
-  // detector at that boundary keeps the handler's snapshot current.
-  val toggleControls = { onSetControlsVisible(!controlsVisible) }
+  val latestControlsVisible = rememberUpdatedState(controlsVisible)
+  val toggleControls = { onSetControlsVisible(!latestControlsVisible.value) }
   if (!allowsPlaybackGestures(phase)) return
   Box(
     modifier = Modifier
       .fillMaxSize()
       .semantics { contentDescription = "Video playback surface" }
-      .pointerInput(player, phase, controlsVisible) {
+      .pointerInput(player, phase) {
         detectTapGestures(
           onTap = { toggleControls() },
           onDoubleTap = { offset ->
@@ -372,7 +374,7 @@ private fun LoadingOverlay(message: String) {
 }
 
 @Composable
-private fun ErrorOverlay(
+internal fun ErrorOverlay(
   kind: VideoPlaybackErrorKind?,
   onRetry: () -> Unit,
   onBack: () -> Unit,

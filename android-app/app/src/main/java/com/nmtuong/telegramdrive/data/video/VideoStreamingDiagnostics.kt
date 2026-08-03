@@ -23,6 +23,7 @@ internal data class VideoStreamingDiagnosticsSnapshot(
   val bytesRead: Long,
   val firstFrameElapsedMs: Long?,
   val rebufferCount: Int,
+  val positionWriteCount: Int,
 )
 
 internal object VideoStreamingDiagnostics {
@@ -39,6 +40,7 @@ internal object VideoStreamingDiagnostics {
   private val committedSeekCount = AtomicInteger(0)
   private val rangeRequestCount = AtomicInteger(0)
   private val rebufferCount = AtomicInteger(0)
+  private val positionWriteCount = AtomicInteger(0)
   private val rangeOffset = AtomicLong(0L)
   private val rangeLength = AtomicLong(0L)
   private val bytesRead = AtomicLong(0L)
@@ -95,6 +97,8 @@ internal object VideoStreamingDiagnostics {
 
   fun rebuffered() = record { rebufferCount.incrementAndGet() }
 
+  fun positionWritten() = record { positionWriteCount.incrementAndGet() }
+
   fun snapshot(): VideoStreamingDiagnosticsSnapshot = VideoStreamingDiagnosticsSnapshot(
     opaquePlaybackSessionId = playbackSessionId.get(),
     playerCreateCount = playerCreateCount.get(),
@@ -113,6 +117,7 @@ internal object VideoStreamingDiagnostics {
     bytesRead = bytesRead.get(),
     firstFrameElapsedMs = firstFrameElapsedMs.get().takeIf { it >= 0L },
     rebufferCount = rebufferCount.get(),
+    positionWriteCount = positionWriteCount.get(),
   )
 
   fun resetForTests() {
@@ -133,5 +138,6 @@ internal object VideoStreamingDiagnostics {
     bytesRead.set(0L)
     firstFrameElapsedMs.set(-1L)
     rebufferCount.set(0)
+    positionWriteCount.set(0)
   }
 }

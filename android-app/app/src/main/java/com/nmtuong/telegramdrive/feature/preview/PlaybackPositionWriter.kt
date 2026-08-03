@@ -17,6 +17,7 @@ internal data class PlaybackPositionSnapshot(
  */
 internal class PlaybackPositionWriter(
   private val scope: CoroutineScope,
+  private val onPersisted: () -> Unit = {},
   private val persist: suspend (PlaybackPositionSnapshot) -> Unit,
 ) : Closeable {
   private val lock = Any()
@@ -44,6 +45,7 @@ internal class PlaybackPositionWriter(
       try {
         persist(snapshot)
         synchronized(lock) { lastPersisted = snapshot }
+        onPersisted()
       } catch (cancelled: CancellationException) {
         throw cancelled
       } catch (_: Exception) {

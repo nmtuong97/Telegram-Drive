@@ -10,6 +10,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nmtuong.telegramdrive.MainActivity
 import org.junit.Assert.assertEquals
@@ -88,6 +90,37 @@ class FakeVideoPlayerUiTest {
     assertEquals(5, diagnostics.playerCreateCount)
     assertEquals(5, diagnostics.playerReleaseCount)
     assertEquals(0, diagnostics.activePlayerCount)
+  }
+
+  @Test
+  fun deepGalleryAnchorSurvivesPlayerRotationAndBack() {
+    signInIfNeeded()
+
+    composeRule.waitUntil(10_000L) {
+      composeRule.onAllNodesWithContentDescription("Saved media grid").fetchSemanticsNodes().isNotEmpty()
+    }
+    repeat(24) {
+      if (hasText("fixture-video-120.mp4")) return@repeat
+      composeRule.onNodeWithContentDescription("Saved media grid").performTouchInput { swipeUp() }
+      composeRule.waitForIdle()
+    }
+    composeRule.waitUntil(10_000L) { hasText("fixture-video-120.mp4") }
+    composeRule.onNodeWithText("fixture-video-120.mp4").assertIsDisplayed()
+    composeRule.onNodeWithText("fixture-video-120.mp4").performClick()
+    composeRule.waitUntil(10_000L) {
+      composeRule.onAllNodesWithContentDescription("Seek position").fetchSemanticsNodes().isNotEmpty()
+    }
+
+    composeRule.activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+    composeRule.waitForIdle()
+    composeRule.activity.runOnUiThread {
+      composeRule.activity.onBackPressedDispatcher.onBackPressed()
+    }
+    composeRule.waitUntil(10_000L) {
+      composeRule.onAllNodesWithText("Saved Media").fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.waitUntil(10_000L) { hasText("fixture-video-120.mp4") }
+    composeRule.onNodeWithText("fixture-video-120.mp4").assertIsDisplayed()
   }
 
   private fun submitAuthStep(label: String, value: String) {
