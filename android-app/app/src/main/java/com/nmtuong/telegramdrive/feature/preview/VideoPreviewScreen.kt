@@ -110,7 +110,7 @@ fun VideoPreviewScreen(
     onBack()
   }
   LaunchedEffect(state.phase, state.controlsVisible) {
-    if (state.phase == VideoPlaybackPhase.Playing && state.controlsVisible) {
+    if (shouldAutoHideControls(state.phase, state.controlsVisible)) {
       delay(3_500L)
       owner.setControlsVisible(false)
     }
@@ -137,18 +137,12 @@ fun VideoPreviewScreen(
       VideoPoster(request)
     }
 
-    Box(
-      modifier = Modifier
-        .fillMaxSize()
-        .pointerInput(player, state.phase) {
-          detectTapGestures(
-            onTap = { owner.setControlsVisible(!state.controlsVisible) },
-            onDoubleTap = { offset ->
-              owner.seekBy(if (offset.x < size.width / 2f) -10_000L else 10_000L)
-              owner.setControlsVisible(true)
-            },
-          )
-        },
+    VideoGestureLayer(
+      player = player,
+      phase = state.phase,
+      controlsVisible = state.controlsVisible,
+      onSetControlsVisible = owner::setControlsVisible,
+      onSeekBy = owner::seekBy,
     )
 
     val controlsPersistent = state.phase in setOf(
@@ -219,6 +213,36 @@ fun VideoPreviewScreen(
       )
     }
   }
+}
+
+@Composable
+internal fun VideoGestureLayer(
+  player: androidx.media3.common.Player?,
+  phase: VideoPlaybackPhase,
+  controlsVisible: Boolean,
+  onSetControlsVisible: (Boolean) -> Unit,
+  onSeekBy: (Long) -> Unit,
+) {
+  // Visibility changes after a completed tap or auto-hide; restarting this
+  // detector at that boundary keeps the handler's snapshot current.
+  val toggleControls = { onSetControlsVisible(!controlsVisible) }
+  if (!allowsPlaybackGestures(phase)) return
+  Box(
+    modifier = Modifier
+      .fillMaxSize()
+      .semantics { contentDescription = "Video playback surface" }
+      .pointerInput(player, phase, controlsVisible) {
+        detectTapGestures(
+          onTap = { toggleControls() },
+          onDoubleTap = { offset ->
+            if (allowsSeekGestures(phase)) {
+              onSeekBy(if (offset.x < size.width / 2f) -10_000L else 10_000L)
+              onSetControlsVisible(true)
+            }
+          },
+        )
+      },
+  )
 }
 
 @Composable

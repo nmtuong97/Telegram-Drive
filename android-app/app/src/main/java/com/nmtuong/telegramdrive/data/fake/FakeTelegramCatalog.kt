@@ -37,6 +37,27 @@ data class FakeTelegramCatalog(
                 MediaItem(104, 12, "archive.zip", MediaKind.DOCUMENT, DownloadState.Failed("Sample offline failure"), mimeType = "application/zip"),
             )
 
+            val deepGalleryMessages = (1L..120L).map { index ->
+                val isVideo = index % 3L == 0L
+                // Keep existing sample media at the history head so legacy fake
+                // UI tests still load it on the first sync page. Never emit zero:
+                // it is the paging API's first-page sentinel.
+                val messageId = if (index <= 87L) 88L - index else -(index - 87L)
+                FakeRawMessage(
+                    id = messageId,
+                    sourceId = 10L,
+                    mediaItem = MediaItem(
+                        id = messageId,
+                        sourceId = 10L,
+                        name = if (isVideo) "fixture-video-$index.mp4" else "fixture-image-$index.jpg",
+                        kind = if (isVideo) MediaKind.VIDEO else MediaKind.IMAGE,
+                        downloadState = DownloadState.NotDownloaded,
+                        fileId = (2_000L + index).toInt(),
+                        mimeType = if (isVideo) "video/mp4" else "image/jpeg",
+                    ),
+                )
+            }
+
             val rawMessages = listOf(
                 // Page 1 items (Saved Messages, sourceId=10)
                 FakeRawMessage(110L, 10L, mediaItem = MediaItem(110L, 10L, "mountain.jpg", MediaKind.IMAGE, DownloadState.Complete, fileId = 100)),
@@ -59,7 +80,7 @@ data class FakeTelegramCatalog(
                 FakeRawMessage(90L, 11L, mediaItem = MediaItem(90L, 11L, "theme.mp3", MediaKind.AUDIO, DownloadState.NotDownloaded, fileId = 102, mimeType = "audio/mpeg")),
                 FakeRawMessage(89L, 12L, mediaItem = MediaItem(89L, 12L, "specification.pdf", MediaKind.PDF, DownloadState.NotDownloaded, fileId = 103, mimeType = "application/pdf")),
                 FakeRawMessage(88L, 12L, mediaItem = MediaItem(88L, 12L, "archive.zip", MediaKind.DOCUMENT, DownloadState.NotDownloaded, fileId = 104, mimeType = "application/zip")),
-            )
+            ) + deepGalleryMessages
 
             return FakeTelegramCatalog(account, sources, media, rawMessages)
         }

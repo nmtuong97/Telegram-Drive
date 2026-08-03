@@ -72,6 +72,7 @@ class VideoStreamingCoordinator(
   private val defaultReader = ReaderHandle(0L, androidx.media3.common.C.LENGTH_UNSET.toLong())
 
   init {
+    VideoStreamingDiagnostics.coordinatorCreated()
     readers[defaultReader.id] = defaultReader
   }
 
@@ -97,6 +98,7 @@ class VideoStreamingCoordinator(
       length = length.coerceAtLeast(0L).takeIf { it > 0L } ?: androidx.media3.common.C.LENGTH_UNSET.toLong(),
     )
     readers[handle.id] = handle
+    VideoStreamingDiagnostics.readerOpened()
     return handle
   }
 
@@ -118,7 +120,7 @@ class VideoStreamingCoordinator(
     if (closed.get()) return androidx.media3.common.C.RESULT_END_OF_INPUT
     if (reader.cancelled.get()) return androidx.media3.common.C.RESULT_END_OF_INPUT
     if (length == 0) return 0
-    streamingLog("readRequest stable=$stableFileIdentity position=$readPosition length=$length")
+    streamingLog("readRequest position=$readPosition length=$length")
     return mutex.withLock {
       val cancellationVersion = reader.cancellationVersion.value
       if (reader.cancelled.get()) throw CancellationException("Video reader closed")
@@ -151,8 +153,9 @@ class VideoStreamingCoordinator(
         expectedSizeBytes = available.expectedSizeBytes,
         error = null,
       )
+      VideoStreamingDiagnostics.bytesRead(read)
       streamingLog(
-        "readReady stable=$stableFileIdentity position=$readPosition bytes=$read " +
+        "readReady position=$readPosition bytes=$read " +
             "prefix=${available.downloadedPrefixSizeBytes} expected=${available.expectedSizeBytes} " +
             "complete=${available.isDownloadingCompleted}",
       )
@@ -163,6 +166,7 @@ class VideoStreamingCoordinator(
   fun closeReader(reader: ReaderHandle) {
     if (!reader.cancelled.compareAndSet(false, true)) return
     readers.remove(reader.id)
+    if (reader.id != defaultReader.id) VideoStreamingDiagnostics.readerClosed()
     reader.cancellationVersion.value++
     if (activeRequestReader.get() === reader) gateway.cancelFileRange(fileId)
   }
@@ -172,7 +176,7 @@ class VideoStreamingCoordinator(
     positionBytes = position.coerceAtLeast(0L)
     defaultReader.cancellationVersion.value++
     gateway.cancelFileRange(fileId)
-    streamingLog("seek stable=$stableFileIdentity position=${positionBytes}")
+    streamingLog("seek position=${positionBytes}")
     _status.value = _status.value.copy(
       state = VideoStreamingState.SEEKING,
       positionBytes = positionBytes,
@@ -202,6 +206,7 @@ class VideoStreamingCoordinator(
         throw CancellationException("Video range superseded")
       }
       activeRequestReader.set(reader)
+      VideoStreamingDiagnostics.rangeRequested(position, rangeSizeBytes.coerceAtLeast(length))
       val request = gateway.requestFileRange(fileId, position, rangeSizeBytes.coerceAtLeast(length), priority = 32)
       if (request != com.nmtuong.telegramdrive.domain.ActionResult.ACCEPTED) {
         throw IllegalStateException("TDLib rejected video range request")
@@ -267,7 +272,8 @@ class VideoStreamingCoordinator(
     readers.values.toList().forEach(::closeReader)
     gateway.cancelFileRange(fileId)
     gateway.deleteTemporaryFile(fileId)
-    streamingLog("close stable=$stableFileIdentity fileId=$fileId temporaryCleanupRequested=true")
+    VideoStreamingDiagnostics.coordinatorClosed()
+    streamingLog("close temporaryCleanupRequested=true")
     _status.value = _status.value.copy(state = VideoStreamingState.CLOSED)
     onClosed()
   }

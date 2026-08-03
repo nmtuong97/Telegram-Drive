@@ -91,4 +91,34 @@ class VideoPlaybackRulesTest {
 
     assertTrue(isExpectedVideoPlaybackCancellation(cancellation))
   }
+
+  @Test
+  fun gesturesAreAllowedOnlyForUsablePlaybackPhases() {
+    assertTrue(allowsPlaybackGestures(VideoPlaybackPhase.Playing))
+    assertTrue(allowsPlaybackGestures(VideoPlaybackPhase.Paused))
+    assertTrue(allowsPlaybackGestures(VideoPlaybackPhase.Ended))
+    assertFalse(allowsPlaybackGestures(VideoPlaybackPhase.Opening))
+    assertFalse(allowsPlaybackGestures(VideoPlaybackPhase.FatalError))
+
+    assertTrue(allowsSeekGestures(VideoPlaybackPhase.Playing))
+    assertTrue(allowsSeekGestures(VideoPlaybackPhase.Rebuffering))
+    assertFalse(allowsSeekGestures(VideoPlaybackPhase.InitialBuffering))
+    assertFalse(allowsSeekGestures(VideoPlaybackPhase.FatalError))
+    assertFalse(allowsSeekGestures(VideoPlaybackPhase.Ended))
+  }
+
+  @Test
+  fun retryIsAllowedOnlyForRecoverableErrors() {
+    assertTrue(canRetryPlayback(VideoPlaybackPhase.RecoverableError))
+    assertFalse(canRetryPlayback(VideoPlaybackPhase.FatalError))
+    assertFalse(canRetryPlayback(VideoPlaybackPhase.Opening))
+  }
+
+  @Test
+  fun onlyPlayingControlsAutoHide() {
+    assertTrue(shouldAutoHideControls(VideoPlaybackPhase.Playing, controlsVisible = true))
+    assertFalse(shouldAutoHideControls(VideoPlaybackPhase.Playing, controlsVisible = false))
+    assertFalse(shouldAutoHideControls(VideoPlaybackPhase.Paused, controlsVisible = true))
+    assertFalse(shouldAutoHideControls(VideoPlaybackPhase.Ended, controlsVisible = true))
+  }
 }

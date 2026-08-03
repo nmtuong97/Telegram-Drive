@@ -53,9 +53,7 @@ fun AppNavigation(container: AppContainer) {
 
   LaunchedEffect(authorization.state, currentIdentity, videoRequest?.accountIdentity) {
     val requestIdentity = videoRequest?.accountIdentity
-    if (authorization.state != AuthorizationState.Ready ||
-      (requestIdentity != null && currentIdentity != requestIdentity)
-    ) {
+    if (shouldDiscardPlaybackRequest(authorization.state, requestIdentity, currentIdentity)) {
       videoRequest = null
       preview = null
       showGallery = true
@@ -68,7 +66,9 @@ fun AppNavigation(container: AppContainer) {
     return
   }
 
-  val activeVideoRequest = videoRequest?.takeIf { it.accountIdentity == currentIdentity }
+  val activeVideoRequest = videoRequest?.takeIf {
+    canRestorePlaybackRequest(authorization.state, it.accountIdentity, currentIdentity)
+  }
   when {
     activeVideoRequest != null -> VideoPreviewScreen(
       request = activeVideoRequest,
@@ -121,6 +121,21 @@ fun AppNavigation(container: AppContainer) {
     }
   }
 }
+
+internal fun shouldDiscardPlaybackRequest(
+  authorizationState: AuthorizationState,
+  requestIdentity: AccountSessionIdentity?,
+  currentIdentity: AccountSessionIdentity?,
+): Boolean =
+  authorizationState != AuthorizationState.Ready ||
+    (requestIdentity != null && currentIdentity != null && currentIdentity != requestIdentity)
+
+internal fun canRestorePlaybackRequest(
+  authorizationState: AuthorizationState,
+  requestIdentity: AccountSessionIdentity,
+  currentIdentity: AccountSessionIdentity?,
+): Boolean =
+  authorizationState == AuthorizationState.Ready && currentIdentity == requestIdentity
 
 private val VideoPlaybackRequestSaver: Saver<VideoPlaybackRequest?, Any> = listSaver(
   save = { request -> request?.let {

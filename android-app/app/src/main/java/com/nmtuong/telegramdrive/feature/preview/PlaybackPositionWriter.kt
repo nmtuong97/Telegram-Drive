@@ -1,6 +1,7 @@
 package com.nmtuong.telegramdrive.feature.preview
 
 import java.io.Closeable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -40,8 +41,15 @@ internal class PlaybackPositionWriter(
       val snapshot = synchronized(lock) {
         pending.also { pending = null }
       } ?: break
-      persist(snapshot)
-      synchronized(lock) { lastPersisted = snapshot }
+      try {
+        persist(snapshot)
+        synchronized(lock) { lastPersisted = snapshot }
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (_: Exception) {
+        // A failed Room operation must not strand later snapshots or start an
+        // unbounded retry loop. A future enqueue can attempt persistence again.
+      }
     }
 
     synchronized(lock) {

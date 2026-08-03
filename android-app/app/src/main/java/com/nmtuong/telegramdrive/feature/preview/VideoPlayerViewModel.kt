@@ -15,9 +15,9 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.nmtuong.telegramdrive.data.MediaAccessCoordinator
+import com.nmtuong.telegramdrive.data.video.VideoStreamingDiagnostics
 import com.nmtuong.telegramdrive.domain.VideoPlaybackRequest
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -65,6 +65,27 @@ data class VideoPlayerUiState(
   val pendingSeekPositionMs: Long? = null,
 )
 
+internal fun allowsPlaybackGestures(phase: VideoPlaybackPhase): Boolean =
+  phase in setOf(
+    VideoPlaybackPhase.Playing,
+    VideoPlaybackPhase.Paused,
+    VideoPlaybackPhase.Rebuffering,
+    VideoPlaybackPhase.Ended,
+  )
+
+internal fun allowsSeekGestures(phase: VideoPlaybackPhase): Boolean =
+  phase in setOf(
+    VideoPlaybackPhase.Playing,
+    VideoPlaybackPhase.Paused,
+    VideoPlaybackPhase.Rebuffering,
+  )
+
+internal fun canRetryPlayback(phase: VideoPlaybackPhase): Boolean =
+  phase == VideoPlaybackPhase.RecoverableError
+
+internal fun shouldAutoHideControls(phase: VideoPlaybackPhase, controlsVisible: Boolean): Boolean =
+  phase == VideoPlaybackPhase.Playing && controlsVisible
+
 internal data class VideoPlayerDiagnosticsSnapshot(
   val playerCreateCount: Int,
   val playerReleaseCount: Int,
@@ -72,31 +93,17 @@ internal data class VideoPlayerDiagnosticsSnapshot(
 )
 
 internal object VideoPlayerDiagnostics {
-  private val playerCreateCount = AtomicInteger(0)
-  private val playerReleaseCount = AtomicInteger(0)
-  private val activePlayerCount = AtomicInteger(0)
+  fun playerCreated() = VideoStreamingDiagnostics.playerCreated()
 
-  fun playerCreated() {
-    playerCreateCount.incrementAndGet()
-    activePlayerCount.incrementAndGet()
-  }
-
-  fun playerReleased() {
-    playerReleaseCount.incrementAndGet()
-    activePlayerCount.updateAndGet { count -> (count - 1).coerceAtLeast(0) }
-  }
+  fun playerReleased() = VideoStreamingDiagnostics.playerReleased()
 
   fun snapshot(): VideoPlayerDiagnosticsSnapshot = VideoPlayerDiagnosticsSnapshot(
-    playerCreateCount = playerCreateCount.get(),
-    playerReleaseCount = playerReleaseCount.get(),
-    activePlayerCount = activePlayerCount.get(),
+    playerCreateCount = VideoStreamingDiagnostics.snapshot().playerCreateCount,
+    playerReleaseCount = VideoStreamingDiagnostics.snapshot().playerReleaseCount,
+    activePlayerCount = VideoStreamingDiagnostics.snapshot().activePlayerCount,
   )
 
-  fun resetForTests() {
-    playerCreateCount.set(0)
-    playerReleaseCount.set(0)
-    activePlayerCount.set(0)
-  }
+  fun resetForTests() = VideoStreamingDiagnostics.resetForTests()
 }
 
 fun resumePositionMs(savedPositionMs: Long?, durationMs: Long): Long {
@@ -198,6 +205,7 @@ class VideoPlayerViewModel(
   private var positionJob: Job? = null
   private var resumeOnForeground = false
   private var closed = false
+  private var playerStartElapsedMs = 0L
   private val positionWriter = PlaybackPositionWriter(viewModelScope) { snapshot ->
     mediaAccess.savePlaybackPosition(request, snapshot.positionMs, snapshot.durationMs)
   }
@@ -207,7 +215,10 @@ class VideoPlayerViewModel(
       _uiState.update { state ->
         state.copy(
           phase = when (playbackState) {
-            Player.STATE_BUFFERING -> if (state.firstFrameRendered) VideoPlaybackPhase.Rebuffering else VideoPlaybackPhase.InitialBuffering
+            Player.STATE_BUFFERING -> if (state.firstFrameRendered) {
+              VideoStreamingDiagnostics.rebuffered()
+              VideoPlaybackPhase.Rebuffering
+            } else VideoPlaybackPhase.InitialBuffering
             Player.STATE_READY -> if (current.isPlaying) VideoPlaybackPhase.Playing else VideoPlaybackPhase.Paused
             Player.STATE_ENDED -> VideoPlaybackPhase.Ended
             else -> state.phase
@@ -235,6 +246,7 @@ class VideoPlayerViewModel(
     }
 
     override fun onRenderedFirstFrame() {
+      VideoStreamingDiagnostics.firstFrameRendered(SystemClock.elapsedRealtime() - playerStartElapsedMs)
       _uiState.update { it.copy(firstFrameRendered = true) }
     }
 
@@ -276,6 +288,7 @@ class VideoPlayerViewModel(
   fun initialize(context: Context) {
     if (closed || _player.value != null) return
     val currentGeneration = generation.incrementAndGet()
+    playerStartElapsedMs = SystemClock.elapsedRealtime()
     val created = ExoPlayer.Builder(context.applicationContext).build()
     VideoPlayerDiagnostics.playerCreated()
     created.addListener(listener)
@@ -357,6 +370,7 @@ class VideoPlayerViewModel(
     val wasPlaying = current.isPlaying
     val resolvesImmediately = !wasPlaying || current.bufferedPosition >= target
     current.seekTo(target)
+    VideoStreamingDiagnostics.seekCommitted()
     _uiState.update {
       it.copy(
         phase = when {
@@ -395,6 +409,7 @@ class VideoPlayerViewModel(
   }
 
   fun retry(context: Context) {
+    if (closed || !canRetryPlayback(_uiState.value.phase)) return
     _player.value?.let { persistPosition(it, force = true) }
     prepareJob?.cancel()
     releasePlayer()

@@ -50,3 +50,69 @@
 With a Ready session on `emulator-5554`, rerun the RT-01–RT-10 matrix from the objective and record sanitized first-frame/range/seek/retry/lifecycle/Gallery-continuity evidence. In particular, the real run must prove that remote range requests start before full download, the final rapid seek wins, released players/readers/coordinators return to zero, and a completed local file avoids TDLib range requests.
 
 Until that user-controlled authentication step is available, the correct status is `BLOCKED`, not `PASS` or `COMPLETE`.
+
+## Current hardening round — 8104b30
+
+Status: `BLOCKED — AUTHENTICATED_SESSION_REQUIRED`.
+
+This round started clean on `agent/android-streaming-video-goal` at
+`8104b30f334c82bc1871f581583d5fe1eeed3c33`. The earlier entries above are
+historical evidence and are not used as results for this round.
+
+## Final hardening fixes
+
+| Finding | Root cause | Fix | Automated test | Real evidence |
+|---------|------------|-----|----------------|---------------|
+| Controls did not reliably reappear after auto-hide | Gesture detector retained a visibility snapshot | Gesture detector is keyed by player, phase, and visibility; visibility changes occur after a completed gesture or timer boundary | Playback-policy tests cover repeated visibility toggles, playable phases, and paused no-auto-hide policy | Blocked: no Ready session |
+| Invalid overlays accepted player gestures | Gesture surface was installed independently of playback phase | Explicit playback/seek gesture policies install the surface only for valid phases | Playback-policy tests reject Opening, buffering, error, and closed seek gestures | Blocked: no Ready session |
+| Retry could be invoked from a stale error surface | Retry did not validate its phase | Retry now accepts only `RecoverableError` | Playback-policy test | Blocked: no Ready session |
+| Transient identity resolution discarded a valid restored request | `null` identity was treated as a confirmed mismatch | Route holds the request while identity is unresolved and restores only after a matching identity is resolved | `PlaybackRestorationPolicyTest` covers match, temporary null, mismatch, and non-Ready authorization | Blocked: no Ready session |
+| Failed position write could leave later snapshots stranded | Writer drain exited on a persistence exception | Drain absorbs one non-cancellation failure and continues without an unbounded retry loop | `PlaybackPositionWriterTest` | Not applicable to sign-in screen |
+
+## Streaming metrics
+
+| Scenario | First frame | Bytes | Ranges | Seek latency | Rebuffers |
+|----------|-------------|-------|--------|--------------|-----------|
+| RT-01–RT-10 real Telegram | BLOCKED | BLOCKED | BLOCKED | BLOCKED | BLOCKED |
+
+Debug/test diagnostics now expose only opaque session and aggregate player, coordinator, reader, seek, range, byte, first-frame, and rebuffer counters. They never retain filenames, captions, paths, chat IDs, stable identity values, tokens, or session data.
+
+## Resource lifecycle
+
+| Scenario | Players after | Readers after | Coordinators after |
+|----------|---------------|---------------|--------------------|
+| Deterministic range-read cleanup | N/A | 0 | 0 |
+| Real Back/reopen matrix | BLOCKED | BLOCKED | BLOCKED |
+
+## Controls verification
+
+| Scenario | Expected | Actual | Result |
+|----------|----------|--------|--------|
+| Playing policy | Auto-hide eligible; tap policy enabled | Verified by deterministic policy tests | PASS |
+| Paused policy | Does not auto-hide | Verified by deterministic policy tests | PASS |
+| Opening/Fatal error policy | No seek gesture surface | Verified by deterministic policy tests | PASS |
+| Real hide/show and playback controls | Full interactive matrix | Requires Ready Telegram session | BLOCKED |
+
+## Gallery continuity
+
+| Query/filter | Anchor before | Anchor after | Result |
+|--------------|---------------|--------------|--------|
+| Fake fixture catalog | 120 deterministic video/image fixtures are available below existing initial history pages | Existing saved `LazyGridState` route owner remains unchanged | READY FOR DEVICE TEST |
+| Real Gallery | BLOCKED | BLOCKED | AUTHENTICATED_SESSION_REQUIRED |
+
+## Current-round automated evidence
+
+| Command | Result | Duration |
+|---------|--------|----------|
+| `:app:testDebugUnitTest -PtelegramDataSource=fake` | PASS | 18s |
+| `:app:connectedDebugAndroidTest -PtelegramDataSource=fake` | PASS, 22/22 | 37s |
+| `:app:lintDebug -PtelegramDataSource=fake` | PASS | 37s |
+| `:app:assembleDebug -PtelegramDataSource=fake` | PASS | 7s |
+| `:app:assembleDebug` | PASS | 16s |
+
+## Current hard blocker
+
+- Device: `emulator-5554`, online.
+- Real-source package was absent, so the real-source debug APK was installed and launched without clearing data, logging out, or resetting the emulator.
+- `android layout --pretty` reported `Telegram sign in`, `Phone number`, and `Continue`; the matching sanitized screenshot contains no entered value or private account data.
+- Required user action: authenticate the app to Telegram on `emulator-5554`, then return to this goal to run RT-01–RT-10. Do not provide credentials to the agent.

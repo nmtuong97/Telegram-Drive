@@ -62,4 +62,20 @@ class PlaybackPositionWriterTest {
 
     assertEquals(listOf(PlaybackPositionSnapshot(9_000L, 60_000L)), writes)
   }
+
+  @Test
+  fun failedWriteDoesNotPreventALaterFinalSnapshotFromDraining() = runTest {
+    val writes = mutableListOf<PlaybackPositionSnapshot>()
+    val writer = PlaybackPositionWriter(this) { snapshot ->
+      if (snapshot.positionMs == 1_000L) error("database unavailable")
+      writes += snapshot
+    }
+
+    writer.enqueue(PlaybackPositionSnapshot(1_000L, 60_000L), force = true)
+    writer.enqueue(PlaybackPositionSnapshot(2_000L, 60_000L), force = true)
+    writer.close()
+    advanceUntilIdle()
+
+    assertEquals(listOf(PlaybackPositionSnapshot(2_000L, 60_000L)), writes)
+  }
 }
