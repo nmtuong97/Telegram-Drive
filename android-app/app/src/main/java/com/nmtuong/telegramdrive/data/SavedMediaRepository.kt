@@ -461,6 +461,7 @@ class SavedMediaRepository(
         database.savedMediaDao().deleteAccount(identity.accountId, identity.databaseGeneration)
         database.cachedFileDao().deleteAccount(identity.accountId, identity.databaseGeneration)
         database.syncStateDao().deleteAccount(identity.accountId, identity.databaseGeneration)
+        database.playbackPositionDao().deleteAccount(identity.accountId, identity.databaseGeneration)
       }
     }
   }

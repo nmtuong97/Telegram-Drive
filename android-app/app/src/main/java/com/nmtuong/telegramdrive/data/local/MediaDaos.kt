@@ -89,6 +89,18 @@ interface CachedFileDao {
 }
 
 @Dao
+interface PlaybackPositionDao {
+  @Query("SELECT * FROM playback_position WHERE accountId = :accountId AND databaseGeneration = :databaseGeneration AND stableFileIdentity = :stableIdentity LIMIT 1")
+  suspend fun find(accountId: Long, databaseGeneration: Long, stableIdentity: String): PlaybackPositionEntity?
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun upsert(position: PlaybackPositionEntity)
+
+  @Query("DELETE FROM playback_position WHERE accountId = :accountId AND databaseGeneration = :databaseGeneration")
+  suspend fun deleteAccount(accountId: Long, databaseGeneration: Long)
+}
+
+@Dao
 interface SyncStateDao {
   @Query("SELECT * FROM sync_state WHERE accountId = :accountId AND databaseGeneration = :databaseGeneration AND chatId = :chatId LIMIT 1")
   suspend fun find(accountId: Long, databaseGeneration: Long, chatId: Long): SyncStateEntity?

@@ -3,6 +3,7 @@ package com.nmtuong.telegramdrive.data
 import com.nmtuong.telegramdrive.data.local.CachedFileEntity
 import com.nmtuong.telegramdrive.data.local.CachedFileState
 import com.nmtuong.telegramdrive.data.local.CachedFileType
+import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -27,6 +28,26 @@ class MediaAccessCoordinatorTest {
     val cached = listOf(thumbnail("only", 10L))
 
     assertTrue(thumbnailEvictionCandidates(cached, maxEntries = 1).isEmpty())
+  }
+
+  @Test
+  fun partialLocalVideoIsRejectedWhenItIsShorterThanExpected() {
+    val root = Files.createTempDirectory("video-source-rules-").toFile()
+    val path = root.resolve("video.partial").also { it.writeBytes(ByteArray(4)) }
+
+    assertEquals(null, verifiedCompleteLocalVideoPath(path.absolutePath, expectedSizeBytes = 8L))
+
+    root.deleteRecursively()
+  }
+
+  @Test
+  fun completeLocalVideoIsSelectedWhenItMeetsExpectedSize() {
+    val root = Files.createTempDirectory("video-source-rules-").toFile()
+    val path = root.resolve("video.complete").also { it.writeBytes(ByteArray(8)) }
+
+    assertEquals(path.absolutePath, verifiedCompleteLocalVideoPath(path.absolutePath, expectedSizeBytes = 8L))
+
+    root.deleteRecursively()
   }
 
   private fun thumbnail(identity: String, lastAccessedAt: Long) = CachedFileEntity(

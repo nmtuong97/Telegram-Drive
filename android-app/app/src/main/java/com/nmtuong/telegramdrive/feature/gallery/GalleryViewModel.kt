@@ -81,7 +81,14 @@ class GalleryViewModel(
   }
 
   fun openMedia(entity: SavedMediaEntity) {
+    if (_openState.value is GalleryOpenState.Loading || _openState.value is GalleryOpenState.Opened) return
     lastOpenEntity = entity
+    if (entity.mediaType == "VIDEO") {
+      // Opening a video must never wait for a fixed remote prefix. The player
+      // validates this local candidate and otherwise starts TDLib range loading.
+      _openState.value = GalleryOpenState.Opened(entity, entity.localFilePath.orEmpty())
+      return
+    }
     viewModelScope.launch {
       _openState.value = GalleryOpenState.Loading
       _openState.value = when (val result = mediaAccess.openOriginal(entity)) {

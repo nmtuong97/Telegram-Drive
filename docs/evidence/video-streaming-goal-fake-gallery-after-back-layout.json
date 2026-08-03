@@ -1,0 +1,242 @@
+[
+  {
+    "interactions": [
+      "clickable",
+      "focusable",
+      "long-clickable"
+    ],
+    "center": "[640,432]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[222,804]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1082,804]",
+    "key": 3506402
+  },
+  {
+    "text": "⌕",
+    "content-desc": "Search",
+    "center": "[120,432]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "state": [
+      "checked"
+    ],
+    "center": "[128,624]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[346,624]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[605,624]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "checkable",
+      "clickable",
+      "focusable"
+    ],
+    "center": "[845,624]",
+    "key": 3506402
+  },
+  {
+    "text": "↕",
+    "center": "[96,804]",
+    "key": 3506402
+  },
+  {
+    "text": "Newest first",
+    "center": "[244,804]",
+    "key": 3506402
+  },
+  {
+    "text": "⟳  Sync",
+    "center": "[1082,804]",
+    "key": 3506402
+  },
+  {
+    "text": "Up to date",
+    "center": "[640,960]",
+    "key": 3506402
+  },
+  {
+    "text": "Unknown date",
+    "center": "[184,1098]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[336,1488]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[943,1386]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[336,2179]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[943,2179]",
+    "key": 3506402
+  },
+  {
+    "text": "Search filename or caption",
+    "center": "[509,432]",
+    "key": 3506402
+  },
+  {
+    "text": "All",
+    "center": "[128,624]",
+    "key": 3506402
+  },
+  {
+    "text": "Images",
+    "center": "[346,624]",
+    "key": 3506402
+  },
+  {
+    "text": "Videos",
+    "center": "[605,624]",
+    "key": 3506402
+  },
+  {
+    "text": "Local",
+    "center": "[845,624]",
+    "key": 3506402
+  },
+  {
+    "content-desc": "Image: mountain.jpg",
+    "center": "[336,1488]",
+    "key": 3506402
+  },
+  {
+    "text": "mountain.jpg",
+    "center": "[199,1765]",
+    "key": 3506402
+  },
+  {
+    "content-desc": "Video: demo.mp4",
+    "center": "[943,1386]",
+    "key": 3506402
+  },
+  {
+    "text": "demo.mp4",
+    "center": "[783,1663]",
+    "key": 3506402
+  },
+  {
+    "content-desc": "Image: mountain-duplicate.jpg",
+    "center": "[336,2179]",
+    "key": 3506402
+  },
+  {
+    "text": "mountain-duplicate.jpg",
+    "center": "[294,2456]",
+    "key": 3506402
+  },
+  {
+    "content-desc": "Video: trailer.mp4",
+    "center": "[943,2179]",
+    "key": 3506402
+  },
+  {
+    "text": "trailer.mp4",
+    "center": "[782,2456]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[1126,252]",
+    "key": 3506402
+  },
+  {
+    "text": "Image",
+    "center": "[337,1447]",
+    "key": 3506402
+  },
+  {
+    "text": "Image",
+    "center": "[337,2138]",
+    "key": 3506402
+  },
+  {
+    "text": "Saved Media",
+    "center": "[236,252]",
+    "key": 3506402
+  },
+  {
+    "content-desc": "Open sources",
+    "center": "[1126,252]",
+    "key": 3506402
+  },
+  {
+    "text": "↗",
+    "center": "[1038,252]",
+    "key": 3506402
+  },
+  {
+    "text": "Sources",
+    "center": "[1153,252]",
+    "key": 3506402
+  },
+  {
+    "text": "▶",
+    "center": "[944,1345]",
+    "key": 3506402
+  },
+  {
+    "text": "▶",
+    "center": "[944,2138]",
+    "key": 3506402
+  }
+]

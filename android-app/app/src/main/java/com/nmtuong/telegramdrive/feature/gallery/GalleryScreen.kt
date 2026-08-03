@@ -24,8 +24,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -51,6 +53,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,7 +87,7 @@ import java.util.Locale
 fun GalleryScreen(
   viewModel: GalleryViewModel,
   onOpenSourceBrowser: () -> Unit,
-  onOpenMedia: (SavedMediaEntity, String) -> Unit,
+  onOpenMedia: (SavedMediaEntity, String, String?) -> Unit,
 ) {
   val items = viewModel.pagingData.collectAsLazyPagingItems()
   val query by viewModel.query.collectAsStateWithLifecycle()
@@ -92,6 +95,7 @@ fun GalleryScreen(
   val syncResult by viewModel.syncResult.collectAsStateWithLifecycle(initialValue = null)
   val thumbnailPaths by viewModel.thumbnailPaths.collectAsStateWithLifecycle()
   val openState by viewModel.openState.collectAsStateWithLifecycle()
+  val gridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
   var searchText by remember { mutableStateOf(query.search) }
   val syncPresentation = syncPresentation(syncState, syncResult)
   val hasActiveQuery = query.search.isNotBlank() || query.mediaFilter != GalleryMediaFilter.ALL || query.localOnly
@@ -103,7 +107,11 @@ fun GalleryScreen(
   LaunchedEffect(openState) {
     when (val state = openState) {
       is GalleryOpenState.Opened -> {
-        onOpenMedia(state.entity, state.path)
+        onOpenMedia(
+          state.entity,
+          state.path,
+          state.entity.thumbnailStableFileIdentity?.let(thumbnailPaths::get),
+        )
         viewModel.consumeOpenState()
       }
       else -> Unit
@@ -175,6 +183,7 @@ fun GalleryScreen(
               GalleryGrid(
                 items = items,
                 thumbnailPaths = thumbnailPaths,
+                state = gridState,
                 onLoadThumbnail = viewModel::loadThumbnail,
                 onOpenMedia = viewModel::openMedia,
                 modifier = Modifier.weight(1f),
@@ -400,12 +409,14 @@ private fun OpenStatus(openState: GalleryOpenState, onRetry: () -> Unit) {
 private fun GalleryGrid(
   items: androidx.paging.compose.LazyPagingItems<SavedMediaEntity>,
   thumbnailPaths: Map<String, String>,
+  state: LazyGridState,
   onLoadThumbnail: (SavedMediaEntity) -> Unit,
   onOpenMedia: (SavedMediaEntity) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   LazyVerticalGrid(
     columns = GridCells.Adaptive(minSize = 156.dp),
+    state = state,
     modifier = modifier.fillMaxWidth(),
     contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
     horizontalArrangement = Arrangement.spacedBy(10.dp),

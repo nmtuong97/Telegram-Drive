@@ -4,13 +4,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nmtuong.telegramdrive.bootstrap.AppContainer
 import com.nmtuong.telegramdrive.domain.AuthorizationState
+import com.nmtuong.telegramdrive.domain.AccountSessionIdentity
 import com.nmtuong.telegramdrive.domain.PreviewTarget
-import com.nmtuong.telegramdrive.data.local.SavedMediaEntity
+import com.nmtuong.telegramdrive.domain.VideoPlaybackRequest
 import com.nmtuong.telegramdrive.feature.auth.AuthorizationScreen
 import com.nmtuong.telegramdrive.feature.auth.AuthorizationViewModel
 import com.nmtuong.telegramdrive.feature.library.LibraryScreen
@@ -38,41 +42,100 @@ fun AppNavigation(container: AppContainer) {
   }
   val authorization by authorizationViewModel.state.collectAsStateWithLifecycle()
   var preview by remember { mutableStateOf<PreviewTarget?>(null) }
-  var galleryVideoEntity by remember { mutableStateOf<SavedMediaEntity?>(null) }
-  var showGallery by remember { mutableStateOf(true) }
+  var videoRequest by rememberSaveable(stateSaver = VideoPlaybackRequestSaver) { mutableStateOf<VideoPlaybackRequest?>(null) }
+  var showGallery by rememberSaveable { mutableStateOf(true) }
 
-  when (val target = preview) {
-    is PreviewTarget.Image -> ImagePreviewScreen(target.path) { preview = null; galleryVideoEntity = null }
-    is PreviewTarget.Video -> VideoPreviewScreen(
-      path = target.path,
-      onBack = { preview = null; galleryVideoEntity = null },
-      dataSourceFactory = galleryVideoEntity?.let(container.mediaAccessCoordinator::videoDataSourceFactory),
+  if (authorization.state != AuthorizationState.Ready) {
+    AuthorizationScreen(authorizationViewModel)
+    return
+  }
+
+  when {
+    videoRequest != null -> VideoPreviewScreen(
+      request = checkNotNull(videoRequest),
+      mediaAccess = container.mediaAccessCoordinator,
+      onBack = { videoRequest = null },
     )
-    is PreviewTarget.Animation -> AnimationPreviewScreen(target.path) { preview = null }
-    is PreviewTarget.Audio -> AudioPreviewScreen(target.path) { preview = null }
-    is PreviewTarget.Pdf -> PdfPreviewScreen(target.path) { preview = null }
-    is PreviewTarget.Text -> TextPreviewScreen(target.path) { preview = null }
-    is PreviewTarget.External -> ExternalPreviewScreen(target.path, target.mimeType) { preview = null }
-    null -> if (authorization.state == AuthorizationState.Ready) {
-      if (showGallery) {
-        GalleryScreen(
-          viewModel = galleryViewModel,
-          onOpenSourceBrowser = { showGallery = false },
-          onOpenMedia = { entity, path ->
-            galleryVideoEntity = entity.takeIf { it.mediaType == "VIDEO" }
-            preview = if (entity.mediaType == "IMAGE") PreviewTarget.Image(entity.messageId, path)
-            else PreviewTarget.Video(entity.messageId, path)
-          },
-        )
-      } else {
-        LibraryScreen(
-          libraryViewModel,
-          { galleryVideoEntity = null; preview = it },
-          onOpenGallery = { showGallery = true },
-        )
-      }
+    preview != null -> when (val target = checkNotNull(preview)) {
+      is PreviewTarget.Image -> ImagePreviewScreen(target.path) { preview = null }
+      is PreviewTarget.Video -> VideoPreviewScreen(path = target.path, onBack = { preview = null })
+      is PreviewTarget.Animation -> AnimationPreviewScreen(target.path) { preview = null }
+      is PreviewTarget.Audio -> AudioPreviewScreen(target.path) { preview = null }
+      is PreviewTarget.Pdf -> PdfPreviewScreen(target.path) { preview = null }
+      is PreviewTarget.Text -> TextPreviewScreen(target.path) { preview = null }
+      is PreviewTarget.External -> ExternalPreviewScreen(target.path, target.mimeType) { preview = null }
+    }
+    else -> if (showGallery) {
+      GalleryScreen(
+        viewModel = galleryViewModel,
+        onOpenSourceBrowser = { showGallery = false },
+        onOpenMedia = { entity, path, thumbnailPath ->
+          if (entity.mediaType == "VIDEO") {
+            videoRequest = VideoPlaybackRequest(
+              accountIdentity = AccountSessionIdentity(entity.accountId, entity.databaseGeneration),
+              stableFileIdentity = entity.originalStableFileIdentity,
+              telegramFileId = entity.telegramFileId,
+              chatId = entity.chatId,
+              messageId = entity.messageId,
+              displayName = entity.stableDisplayName,
+              durationSeconds = entity.durationSeconds.toLong(),
+              mimeType = entity.mimeType,
+              expectedSizeBytes = null,
+              localPath = path.takeIf { it.isNotBlank() },
+              thumbnailPath = thumbnailPath,
+              minithumbnailData = entity.minithumbnailData,
+            )
+          } else {
+            preview = PreviewTarget.Image(entity.messageId, path)
+          }
+        },
+      )
     } else {
-      AuthorizationScreen(authorizationViewModel)
+      LibraryScreen(
+        libraryViewModel,
+        { preview = it },
+        onOpenGallery = { showGallery = true },
+      )
     }
   }
 }
+
+private val VideoPlaybackRequestSaver: Saver<VideoPlaybackRequest?, Any> = listSaver(
+  save = { request -> request?.let {
+    listOf(
+        it.accountIdentity.accountId,
+        it.accountIdentity.databaseGeneration,
+        it.stableFileIdentity,
+        it.telegramFileId,
+        it.chatId,
+        it.messageId,
+        it.displayName,
+        it.durationSeconds,
+        it.mimeType,
+        it.expectedSizeBytes,
+        it.localPath,
+        it.thumbnailPath,
+        it.minithumbnailData,
+    )
+  } ?: emptyList() },
+  restore = { values ->
+    if (values.isEmpty()) {
+      null
+    } else {
+      VideoPlaybackRequest(
+        accountIdentity = AccountSessionIdentity(values[0] as Long, values[1] as Long),
+        stableFileIdentity = values[2] as String,
+        telegramFileId = values[3] as Int,
+        chatId = values[4] as Long,
+        messageId = values[5] as Long,
+        displayName = values[6] as String,
+        durationSeconds = values[7] as Long,
+        mimeType = values[8] as String?,
+        expectedSizeBytes = values[9] as Long?,
+        localPath = values[10] as String?,
+        thumbnailPath = values[11] as String?,
+        minithumbnailData = values[12] as String?,
+      )
+    }
+  },
+)
