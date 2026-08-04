@@ -223,11 +223,25 @@ class VideoPlayerViewModel internal constructor(
 
     override fun onPlaybackStateChanged(playbackState: Int) {
       if (!isCurrentOwner()) return
+      val elapsedMs = clock.elapsedRealtime()
+      when (playbackState) {
+        Player.STATE_BUFFERING -> if (_uiState.value.firstFrameRendered) {
+          VideoStreamingDiagnostics.rebufferStarted(elapsedMs)
+        }
+        Player.STATE_READY,
+        Player.STATE_ENDED,
+        Player.STATE_IDLE,
+        -> {
+          VideoStreamingDiagnostics.rebufferEnded(elapsedMs)
+          if (playbackState == Player.STATE_READY && owner.isPlaying) {
+            VideoStreamingDiagnostics.seekResumed(elapsedMs)
+          }
+        }
+      }
       _uiState.update { state ->
         state.copy(
           phase = when (playbackState) {
             Player.STATE_BUFFERING -> if (state.firstFrameRendered) {
-              VideoStreamingDiagnostics.rebuffered()
               VideoPlaybackPhase.Rebuffering
             } else VideoPlaybackPhase.InitialBuffering
             Player.STATE_READY -> if (owner.isPlaying) VideoPlaybackPhase.Playing else VideoPlaybackPhase.Paused
@@ -272,6 +286,8 @@ class VideoPlayerViewModel internal constructor(
 
     override fun onPlayerError(error: VideoPlayerEngineError) {
       if (!isCurrentOwner()) return
+      VideoStreamingDiagnostics.rebufferEnded(clock.elapsedRealtime())
+      VideoStreamingDiagnostics.seekAbandoned()
       if (isExpectedVideoPlaybackCancellation(error.cause, error.details)) {
         _uiState.update { state ->
           state.copy(
@@ -389,8 +405,15 @@ class VideoPlayerViewModel internal constructor(
     val target = positionMs.coerceIn(0L, current.duration.takeIf { it > 0L } ?: Long.MAX_VALUE)
     val wasPlaying = current.isPlaying
     val resolvesImmediately = !wasPlaying || current.bufferedPosition >= target
+    val seekStartedAt = clock.elapsedRealtime()
     current.seekTo(target)
     VideoStreamingDiagnostics.seekCommitted()
+    if (wasPlaying) {
+      VideoStreamingDiagnostics.seekStarted(seekStartedAt)
+      if (resolvesImmediately) VideoStreamingDiagnostics.seekResumed(seekStartedAt)
+    } else {
+      VideoStreamingDiagnostics.seekAbandoned()
+    }
     _uiState.update {
       it.copy(
         phase = when {
@@ -420,6 +443,8 @@ class VideoPlayerViewModel internal constructor(
     val current = engine
     resumeOnForeground = current?.isPlaying == true
     current?.pause()
+    VideoStreamingDiagnostics.rebufferEnded(clock.elapsedRealtime())
+    VideoStreamingDiagnostics.seekAbandoned()
     current?.let { persistPosition(it, force = true) }
   }
 
@@ -469,6 +494,8 @@ class VideoPlayerViewModel internal constructor(
   }
 
   private fun releasePlayer() {
+    VideoStreamingDiagnostics.rebufferEnded(clock.elapsedRealtime())
+    VideoStreamingDiagnostics.seekAbandoned()
     val current = engine
     if (current != null) {
       currentListener?.let(current::removeListener)

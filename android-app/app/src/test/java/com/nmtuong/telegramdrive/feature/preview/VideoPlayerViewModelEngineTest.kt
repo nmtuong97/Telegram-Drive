@@ -75,9 +75,11 @@ class VideoPlayerViewModelEngineTest {
 
   @Test
   fun bufferedAndRemoteSeeksReachExpectedPhasesAndKeepTheLastTarget() = playbackTest {
+    VideoStreamingDiagnostics.resetForTests()
     val gateway = FakePlaybackGateway()
     val engine = FakeVideoPlayerEngine(bufferedPosition = 90_000L)
-    val viewModel = VideoPlayerViewModel(request(), gateway, QueueEngineFactory(), FakePlaybackClock())
+    val clock = FakePlaybackClock()
+    val viewModel = VideoPlayerViewModel(request(), gateway, QueueEngineFactory(), clock)
 
     try {
       viewModel.initializeForTests(engine)
@@ -91,10 +93,17 @@ class VideoPlayerViewModelEngineTest {
       engine.bufferedPosition = 55_000L
       viewModel.seekTo(80_000L)
       assertEquals(VideoPlaybackPhase.Seeking, viewModel.uiState.value.phase)
+      clock.nowMs = 1_000L
+      engine.emitPlaybackState(Player.STATE_BUFFERING)
       engine.emitPlaybackState(Player.STATE_BUFFERING)
       assertEquals(VideoPlaybackPhase.Rebuffering, viewModel.uiState.value.phase)
+      clock.nowMs = 1_250L
       engine.emitReady()
       assertEquals(VideoPlaybackPhase.Playing, viewModel.uiState.value.phase)
+      assertEquals(1, VideoStreamingDiagnostics.snapshot().rebufferCount)
+      assertEquals(250L, VideoStreamingDiagnostics.snapshot().rebufferDurationMs)
+      assertEquals(2, VideoStreamingDiagnostics.snapshot().committedSeekCount)
+      assertEquals(1_250L, VideoStreamingDiagnostics.snapshot().lastSeekToResumeElapsedMs)
 
       engine.pause()
       viewModel.seekTo(35_000L)
@@ -207,8 +216,8 @@ class VideoPlayerViewModelEngineTest {
     }
   }
 
-  private class FakePlaybackClock : VideoPlaybackClock {
-    override fun elapsedRealtime(): Long = 0L
+  private class FakePlaybackClock(var nowMs: Long = 0L) : VideoPlaybackClock {
+    override fun elapsedRealtime(): Long = nowMs
   }
 
   private class FakeVideoPlayerEngine(

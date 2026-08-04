@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Exists only in debug variants and emits aggregate numeric diagnostics. -->
+        <receiver
+            android:name=".debug.VideoStreamingDiagnosticsReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.nmtuong.telegramdrive.debug.action.DUMP_VIDEO_STREAMING_DIAGNOSTICS" />
+                <action android:name="com.nmtuong.telegramdrive.debug.action.RESET_VIDEO_STREAMING_DIAGNOSTICS" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
