@@ -59,7 +59,7 @@ This project is indexed by GitNexus as **Telegram-Drive** (7354 symbols, 14767 r
 - Real/fake source chọn bằng Gradle property `-PtelegramDataSource=real|fake`; không đưa credential/session thật vào source hoặc artifact.
 - Android backup và device transfer phải giữ trạng thái disabled/excluded cho toàn bộ account, TDLib database/session/key, cache và downloaded media.
 - TDLib gateway có lifecycle state machine application-owned; không dùng `Application.onTerminate()` làm cleanup production. Logout/reset/test teardown là explicit close owners; process kill được xem là abrupt.
-- Phase 2 tập trung vào vertical slice Saved Messages Paging → Download → Preview → Logout/Reset; không mở rộng sang Audio, PDF, External Open, Room, global gallery, background transfer, streaming, release, CI/CD, MCP hoặc Lightbuild.
+- Phase 2 tập trung vào vertical slice Saved Messages Paging → Download → Preview → Logout/Reset; không mở rộng sang Audio, PDF, External Open, Room, global gallery, background transfer, streaming, remote release/CI/CD, MCP hoặc Lightbuild. Local real APK handoff is governed by the Local Android distribution section below.
 
 ### Tận dụng Android CLI trong phát triển Android (`android-cli`)
 
@@ -77,7 +77,7 @@ Tất cả AI Agent (Antigravity, Codex, Copilot, Subagents) khi làm việc tro
 
 4. **Triển khai & Chạy ứng dụng (Deploy & Run)**:
    - `android run` không tự động build APK.
-   - Bước 1: Build APK bằng bounded Gradle task: `./gradlew :app:assembleDebug -PtelegramDataSource=fake --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`.
+   - Bước 1: Build APK bằng bounded Gradle task: `./gradlew :app:assembleDebug -PtelegramDataSource=real --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`.
    - Bước 2: Xác định APK path từ project metadata: `android describe --project_dir=android-app`.
    - Bước 3: Deploy: `android run --apks=<resolved-apk-path> --device=<serial-if-needed> --activity=<resolved-launcher-activity>`.
 
@@ -93,5 +93,19 @@ Tất cả AI Agent (Antigravity, Codex, Copilot, Subagents) khi làm việc tro
    - Luôn chạy từng Gradle task riêng biệt có timeout và flags diagnostic:
      - `./scripts/run-gradle-single-flight.sh :app:testDebugUnitTest --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
      - `./scripts/run-gradle-single-flight.sh :app:lintDebug --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
-     - `./scripts/run-gradle-single-flight.sh :app:assembleDebug -PtelegramDataSource=fake --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
+     - `./scripts/run-gradle-single-flight.sh :app:assembleDebug -PtelegramDataSource=real --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
    - Dùng Android CLI/adb để install, launch, dump layout hoặc chụp screenshot trước khi báo hoàn tất công việc.
+
+### Local Android distribution
+
+Sau khi hoàn thành một task Android và implementation đã sẵn sàng để người dùng kiểm tra trên thiết bị:
+
+Use the project skill at `.agents/skills/local-android-distribution/SKILL.md` for the complete handoff procedure.
+
+1. Với task có thay đổi implementation và đã sẵn sàng handoff, tự động chạy `TELEGRAM_DATA_SOURCE=real ./scripts/distribute-local.sh "<task name>"`.
+2. Chỉ dùng `--fast` cho vòng lặp UI nhỏ được yêu cầu rõ ràng; vẫn phải giữ `TELEGRAM_DATA_SOURCE=real`.
+3. Chỉ bỏ qua upload cho task read-only hoặc khi người dùng yêu cầu không upload.
+4. Không dùng `fake` cho APK tester-facing và không fallback âm thầm khi thiếu Telegram/Firebase config hoặc authentication.
+5. Không báo tính năng đã được xác nhận chỉ vì build hoặc upload thành công.
+6. Sau khi upload thành công, báo `READY_FOR_DEVICE_VERIFICATION` cùng branch, commit, build mode, Telegram data source, checks, APK path, Firebase upload result, manual checks, known limitations, và working-tree state.
+7. Nếu test, lint, build, Firebase authentication hoặc upload thất bại thì không báo thành công; sửa lỗi trong phạm vi task hoặc báo `BLOCKED` với nguyên nhân cụ thể.

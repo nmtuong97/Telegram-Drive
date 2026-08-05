@@ -95,6 +95,21 @@ Quy tắc BẮT BUỘC cho mọi task liên quan Gradle:
 8. Dùng script single-flight (nếu dự án đã có). Wrapper phải giữ lock nguyên tử, ghi nhận PID, thời gian, exit code.
 9. Output test thành công chưa đủ chứng minh nếu Gradle Worker chưa thoát hoàn toàn.
 
+### 3.1 Local Android distribution handoff gate
+
+Khi implementation task có thay đổi repository và đã sẵn sàng để người dùng kiểm tra trên thiết bị, agent phải chạy handoff local đầy đủ:
+
+```bash
+TELEGRAM_DATA_SOURCE=real ./scripts/distribute-local.sh "<task name>"
+```
+
+- Chỉ bỏ qua gate cho task read-only hoặc khi user yêu cầu rõ ràng không upload.
+- Chỉ dùng `--fast` cho vòng lặp UI nhỏ được yêu cầu rõ ràng; không đổi data source sang `fake` cho tester-facing release.
+- Script phải thực hiện tuần tự test → lint → build debug real → Firebase App Distribution; không chạy thêm Gradle invocation song song.
+- Nếu thiếu `.firebase-distribution.local`, `android-app/telegram-api.properties`, Firebase authentication, test, lint, build hoặc upload: dừng, báo `BLOCKED`, và không báo `READY_FOR_DEVICE_VERIFICATION`.
+- `READY_FOR_DEVICE_VERIFICATION` chỉ chứng minh APK đã upload; agent vẫn phải tách riêng manual device verification và không tuyên bố feature đã confirmed.
+- Release report phải ghi data source, build mode, APK path, Firebase result/links, branch, commit, working-tree state, checks, manual verification và known limitations.
+
 ## 4. Subagent và Concurrency Policy
 - Subagent không có đầy đủ lịch sử của parent. Parent phải quản lý evidence.
 - Chỉ dùng subagent cho task read-only, độc lập, có prompt đủ ngữ cảnh, không đụng chung file.

@@ -19,6 +19,7 @@ CompiledApps/
 *.key
 Error.html
 **/LatestError.html
+.firebase-distribution.local
 
 # Android local builds
 /android/

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local Android Distribution"
+  short_description: "Build and upload real Android APKs"
+  default_prompt: "Use $local-android-distribution to build and upload the real APK for this completed task."
