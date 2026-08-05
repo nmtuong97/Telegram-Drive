@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
@@ -83,8 +84,13 @@ import java.util.Locale
 @Composable
 fun GalleryScreen(
   viewModel: GalleryViewModel,
+  gridState: LazyGridState,
+  restoreAnchorIndex: Int,
+  restoreAnchorOffset: Int,
+  shouldRestoreAnchor: Boolean,
+  onAnchorRestored: () -> Unit,
   onOpenSourceBrowser: () -> Unit,
-  onOpenMedia: (SavedMediaEntity, String) -> Unit,
+  onOpenMedia: (SavedMediaEntity, String, String?) -> Unit,
 ) {
   val items = viewModel.pagingData.collectAsLazyPagingItems()
   val query by viewModel.query.collectAsStateWithLifecycle()
@@ -103,10 +109,21 @@ fun GalleryScreen(
   LaunchedEffect(openState) {
     when (val state = openState) {
       is GalleryOpenState.Opened -> {
-        onOpenMedia(state.entity, state.path)
+        onOpenMedia(
+          state.entity,
+          state.path,
+          state.entity.thumbnailStableFileIdentity?.let(thumbnailPaths::get),
+        )
         viewModel.consumeOpenState()
       }
       else -> Unit
+    }
+  }
+
+  LaunchedEffect(shouldRestoreAnchor, restoreAnchorIndex, restoreAnchorOffset, items.itemCount) {
+    if (shouldRestoreAnchor && items.itemCount > restoreAnchorIndex) {
+      gridState.scrollToItem(restoreAnchorIndex, restoreAnchorOffset)
+      onAnchorRestored()
     }
   }
 
@@ -175,6 +192,7 @@ fun GalleryScreen(
               GalleryGrid(
                 items = items,
                 thumbnailPaths = thumbnailPaths,
+                state = gridState,
                 onLoadThumbnail = viewModel::loadThumbnail,
                 onOpenMedia = viewModel::openMedia,
                 modifier = Modifier.weight(1f),
@@ -400,13 +418,17 @@ private fun OpenStatus(openState: GalleryOpenState, onRetry: () -> Unit) {
 private fun GalleryGrid(
   items: androidx.paging.compose.LazyPagingItems<SavedMediaEntity>,
   thumbnailPaths: Map<String, String>,
+  state: LazyGridState,
   onLoadThumbnail: (SavedMediaEntity) -> Unit,
   onOpenMedia: (SavedMediaEntity) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   LazyVerticalGrid(
     columns = GridCells.Adaptive(minSize = 156.dp),
-    modifier = modifier.fillMaxWidth(),
+    state = state,
+    modifier = modifier
+      .fillMaxWidth()
+      .semantics { contentDescription = "Saved media grid" },
     contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
     horizontalArrangement = Arrangement.spacedBy(10.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp),

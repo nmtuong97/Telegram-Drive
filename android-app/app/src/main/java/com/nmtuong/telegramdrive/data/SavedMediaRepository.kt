@@ -461,6 +461,7 @@ class SavedMediaRepository(
         database.savedMediaDao().deleteAccount(identity.accountId, identity.databaseGeneration)
         database.cachedFileDao().deleteAccount(identity.accountId, identity.databaseGeneration)
         database.syncStateDao().deleteAccount(identity.accountId, identity.databaseGeneration)
+        database.playbackPositionDao().deleteAccount(identity.accountId, identity.databaseGeneration)
       }
     }
   }
@@ -547,6 +548,7 @@ class SavedMediaRepository(
       width = width,
       height = height,
       durationSeconds = durationSeconds,
+      expectedSizeBytes = sizeBytes.coerceAtLeast(0L),
       telegramFileId = fileId,
       originalStableFileIdentity = stableFileIdentity,
       thumbnailFileId = thumbnailFileId,

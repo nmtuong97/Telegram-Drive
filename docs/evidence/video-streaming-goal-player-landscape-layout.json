@@ -1,0 +1,96 @@
+[
+  {
+    "content-desc": "Back",
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[96,252]",
+    "key": 3506402
+  },
+  {
+    "text": "demo.mp4",
+    "center": "[1500,252]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "focusable"
+    ],
+    "center": "[1428,956]",
+    "key": 3506402
+  },
+  {
+    "content-desc": "Play",
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[120,1100]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[276,1100]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[432,1100]",
+    "key": 3506402
+  },
+  {
+    "text": "0:01 / 0:01",
+    "center": "[1584,1100]",
+    "key": 3506402
+  },
+  {
+    "interactions": [
+      "clickable",
+      "focusable"
+    ],
+    "center": "[2736,1100]",
+    "key": 3506402
+  },
+  {
+    "content-desc": "Seek position",
+    "center": "[1428,956]",
+    "key": 3506402
+  },
+  {
+    "content-desc": "Seek back 10 seconds",
+    "center": "[276,1100]",
+    "key": 3506402
+  },
+  {
+    "text": "-10",
+    "center": "[276,1100]",
+    "key": 3506402
+  },
+  {
+    "content-desc": "Seek forward 10 seconds",
+    "center": "[432,1100]",
+    "key": 3506402
+  },
+  {
+    "text": "+10",
+    "center": "[432,1100]",
+    "key": 3506402
+  },
+  {
+    "content-desc": "Replay",
+    "center": "[2736,1100]",
+    "key": 3506402
+  },
+  {
+    "text": "Replay",
+    "center": "[2736,1100]",
+    "key": 3506402
+  }
+]

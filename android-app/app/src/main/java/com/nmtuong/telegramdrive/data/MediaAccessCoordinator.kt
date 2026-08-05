@@ -5,10 +5,12 @@ import com.nmtuong.telegramdrive.data.local.CachedFileEntity
 import com.nmtuong.telegramdrive.data.local.CachedFileState
 import com.nmtuong.telegramdrive.data.local.CachedFileType
 import com.nmtuong.telegramdrive.data.local.MediaDatabase
+import com.nmtuong.telegramdrive.data.local.PlaybackPositionEntity
 import com.nmtuong.telegramdrive.data.local.SavedMediaEntity
 import com.nmtuong.telegramdrive.domain.AccountSessionIdentity
 import com.nmtuong.telegramdrive.domain.ActionResult
 import com.nmtuong.telegramdrive.domain.TdLibFileSnapshot
+import com.nmtuong.telegramdrive.domain.VideoPlaybackRequest
 import com.nmtuong.telegramdrive.data.video.TdLibVideoDataSource
 import com.nmtuong.telegramdrive.data.video.VideoStreamingCoordinator
 import androidx.media3.datasource.DataSource
@@ -39,6 +41,14 @@ internal fun thumbnailEvictionCandidates(
 ): List<CachedFileEntity> {
   val evictionCount = (cached.size - maxEntries).coerceAtLeast(0)
   return if (evictionCount == 0) emptyList() else cached.take(evictionCount)
+}
+
+internal fun verifiedCompleteLocalVideoPath(path: String?, expectedSizeBytes: Long?): String? {
+  val expectedSize = expectedSizeBytes ?: return null
+  if (expectedSize <= 0L || path.isNullOrBlank()) return null
+  return File(path).takeIf { file ->
+    file.isFile && file.canRead() && file.length() >= expectedSize
+  }?.absolutePath
 }
 
 sealed interface MediaOpenResult {
@@ -90,7 +100,9 @@ class MediaAccessCoordinator(
     if (!entity.belongsTo(identity)) return MediaOpenResult.Failed("Media belongs to another Telegram account")
     val stableIdentity = entity.originalStableFileIdentity
     return try {
-      if (entity.mediaType == "VIDEO") return prepareVideo(entity, identity)
+      // Video navigation is intentionally non-blocking. The Player resolves a
+      // complete local candidate or falls back to TDLib range streaming.
+      if (entity.mediaType == "VIDEO") return MediaOpenResult.Opened(entity.localFilePath.orEmpty())
       deduplicated(AccessKey(identity, stableIdentity)) {
         val currentSnapshot = gateway.getFileSnapshot(entity.telegramFileId)
         val currentPath = currentSnapshot
@@ -126,43 +138,50 @@ class MediaAccessCoordinator(
     }
   }
 
-  private suspend fun prepareVideo(entity: SavedMediaEntity, identity: AccountSessionIdentity): MediaOpenResult {
-    if (identityProvider.currentIdentity.value != identity) return MediaOpenResult.Failed("Telegram account is not ready")
-    val stableIdentity = entity.originalStableFileIdentity
-    return try {
-      val existing = gateway.getFileSnapshot(entity.telegramFileId)
-      val partial = existing?.takeIf {
-        isSnapshotForStableIdentity(it, stableIdentity) &&
-          it.isReadable &&
-          it.localPath != null &&
-          it.downloadedPrefixSizeBytes >= INITIAL_VIDEO_BUFFER_BYTES
+  /** Resolves a verified complete local file without requesting any remote bytes. */
+  suspend fun resolveVideoLocalPath(request: VideoPlaybackRequest): String? {
+    if (identityProvider.currentIdentity.value != request.accountIdentity) return null
+    verifiedCompleteLocalVideoPath(request.localPath, request.expectedSizeBytes)?.let { return it }
+    gateway.getFileSnapshot(request.telegramFileId)?.let { snapshot ->
+      if (isCompleteReadable(snapshot, request.stableFileIdentity, request.expectedSizeBytes)) {
+        return snapshot.localPath
       }
-        ?: run {
-          val request = gateway.requestFileRange(entity.telegramFileId, 0L, INITIAL_VIDEO_BUFFER_BYTES, priority = 32)
-          if (request != ActionResult.ACCEPTED) return MediaOpenResult.Failed("TDLib rejected the initial video buffer")
-          gateway.getFileSnapshot(entity.telegramFileId)?.let { snapshot ->
-            if (isSnapshotForStableIdentity(snapshot, stableIdentity) && snapshot.isReadable && snapshot.localPath != null &&
-              (snapshot.isDownloadingCompleted || snapshot.downloadedPrefixSizeBytes >= INITIAL_VIDEO_BUFFER_BYTES)
-            ) return@run snapshot
-          }
-          withTimeout(FILE_WAIT_TIMEOUT_MS) {
-            gateway.fileUpdates
-              .filter { snapshot ->
-                snapshot.fileId == entity.telegramFileId &&
-                  isSnapshotForStableIdentity(snapshot, stableIdentity) &&
-                  snapshot.isReadable &&
-                  snapshot.localPath != null &&
-                  (snapshot.isDownloadingCompleted || snapshot.downloadedPrefixSizeBytes >= INITIAL_VIDEO_BUFFER_BYTES)
-              }
-              .first()
-          }
-        }
-      if (identityProvider.currentIdentity.value != identity) return MediaOpenResult.Failed("Telegram account changed while preparing media")
-      persistSnapshot(identity, partial, stableIdentity, CachedFileType.VIDEO_PARTIAL, CachedFileState.PARTIAL)
-      MediaOpenResult.Opened(partial.localPath!!)
-    } catch (error: Exception) {
-      MediaOpenResult.Failed(error.message?.takeIf { it.isNotBlank() } ?: "Video initial buffer failed")
     }
+    val cached = database.cachedFileDao().find(
+      request.accountIdentity.accountId,
+      request.accountIdentity.databaseGeneration,
+      request.stableFileIdentity,
+    )
+    return cached
+      ?.takeIf { it.observedState == CachedFileState.COMPLETE.name && it.fileType == CachedFileType.VIDEO_COMPLETE.name }
+      ?.localPath
+      ?.let { path ->
+        verifiedCompleteLocalVideoPath(
+          path = path,
+          expectedSizeBytes = request.expectedSizeBytes ?: cached.observedSizeBytes.takeIf { it > 0L },
+        )
+      }
+  }
+
+  suspend fun loadPlaybackPosition(request: VideoPlaybackRequest): Long? =
+    database.playbackPositionDao().find(
+      request.accountIdentity.accountId,
+      request.accountIdentity.databaseGeneration,
+      request.stableFileIdentity,
+    )?.positionMs
+
+  suspend fun savePlaybackPosition(request: VideoPlaybackRequest, positionMs: Long, durationMs: Long) {
+    if (identityProvider.currentIdentity.value != request.accountIdentity) return
+    database.playbackPositionDao().upsert(
+      PlaybackPositionEntity(
+        accountId = request.accountIdentity.accountId,
+        databaseGeneration = request.accountIdentity.databaseGeneration,
+        stableFileIdentity = request.stableFileIdentity,
+        positionMs = positionMs.coerceAtLeast(0L),
+        durationMs = durationMs.coerceAtLeast(0L),
+        updatedAtEpochMillis = System.currentTimeMillis(),
+      ),
+    )
   }
 
   fun videoDataSourceFactory(entity: SavedMediaEntity): DataSource.Factory = TdLibVideoDataSource.Factory(
@@ -188,6 +207,32 @@ class MediaAccessCoordinator(
     },
   )
 
+  fun videoDataSourceFactory(request: VideoPlaybackRequest): DataSource.Factory = TdLibVideoDataSource.Factory(
+    coordinatorFactory = { _: DataSpec ->
+      check(identityProvider.currentIdentity.value == request.accountIdentity) {
+        "Telegram account changed while opening video"
+      }
+      val key = AccessKey(request.accountIdentity, request.stableFileIdentity)
+      synchronized(activeVideoTransfers) {
+        activeVideoTransfers.getOrPut(key) {
+          ActiveVideoTransfer(
+            coordinator = VideoStreamingCoordinator(
+              gateway = gateway,
+              fileId = request.telegramFileId,
+              stableFileIdentity = request.stableFileIdentity,
+              onClosed = {
+                scope.launch { clearVideoCache(request.accountIdentity, request.stableFileIdentity) }
+              },
+            ),
+          )
+        }.also { it.references++ }.coordinator
+      }
+    },
+    releaseFactory = { _: DataSpec, _: VideoStreamingCoordinator ->
+      { releaseVideoTransfer(AccessKey(request.accountIdentity, request.stableFileIdentity)) }
+    },
+  )
+
   private fun releaseVideoTransfer(key: AccessKey) {
     val transfer = synchronized(activeVideoTransfers) {
       val current = activeVideoTransfers[key] ?: return
@@ -197,16 +242,32 @@ class MediaAccessCoordinator(
     transfer?.coordinator?.close()
   }
 
+  /** Force-closes all readers for one playback session before its player is released. */
+  fun closeVideoPlayback(request: VideoPlaybackRequest) {
+    val transfer = synchronized(activeVideoTransfers) {
+      activeVideoTransfers.remove(AccessKey(request.accountIdentity, request.stableFileIdentity))
+    }
+    transfer?.coordinator?.close()
+  }
+
+  internal fun activeVideoTransferCountForTests(): Int = synchronized(activeVideoTransfers) {
+    activeVideoTransfers.size
+  }
+
   private suspend fun clearVideoCache(entity: SavedMediaEntity, identity: AccountSessionIdentity) {
+    clearVideoCache(identity, entity.originalStableFileIdentity)
+  }
+
+  private suspend fun clearVideoCache(identity: AccountSessionIdentity, stableIdentity: String) {
     if (identityProvider.currentIdentity.value != identity) return
     database.withTransaction {
       database.savedMediaDao().clearLocalPathForStableFile(
         identity.accountId,
         identity.databaseGeneration,
-        entity.originalStableFileIdentity,
+        stableIdentity,
         System.currentTimeMillis(),
       )
-      database.cachedFileDao().find(identity.accountId, identity.databaseGeneration, entity.originalStableFileIdentity)?.let {
+      database.cachedFileDao().find(identity.accountId, identity.databaseGeneration, stableIdentity)?.let {
         database.cachedFileDao().upsert(it.copy(localPath = null, observedState = CachedFileState.NONE.name, fileType = CachedFileType.VIDEO_PARTIAL.name))
       }
     }
@@ -241,7 +302,11 @@ class MediaAccessCoordinator(
     return completed
   }
 
-  private fun isCompleteReadable(snapshot: TdLibFileSnapshot, stableIdentity: String): Boolean =
+  private fun isCompleteReadable(
+    snapshot: TdLibFileSnapshot,
+    stableIdentity: String,
+    expectedSizeBytes: Long? = null,
+  ): Boolean =
     snapshot.isDownloadingCompleted &&
       snapshot.isReadable &&
       (snapshot.stableFileIdentity == null || snapshot.stableFileIdentity == stableIdentity) &&
@@ -249,7 +314,10 @@ class MediaAccessCoordinator(
         File(path).let { file ->
           file.isFile && file.canRead() &&
             file.length() > 0L &&
-            (snapshot.expectedSizeBytes <= 0L || file.length() >= snapshot.expectedSizeBytes)
+            file.length() >= maxOf(
+              snapshot.expectedSizeBytes.coerceAtLeast(0L),
+              expectedSizeBytes?.coerceAtLeast(0L) ?: 0L,
+            )
         }
       } == true
 
@@ -358,6 +426,5 @@ class MediaAccessCoordinator(
     const val MAX_THUMBNAIL_CONCURRENCY = 2
     const val MAX_THUMBNAIL_CACHE_ENTRIES = 200
     const val FILE_WAIT_TIMEOUT_MS = 30_000L
-    const val INITIAL_VIDEO_BUFFER_BYTES = 512L * 1024L
   }
 }

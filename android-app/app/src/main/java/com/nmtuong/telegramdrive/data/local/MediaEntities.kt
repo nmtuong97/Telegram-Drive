@@ -33,6 +33,8 @@ data class SavedMediaEntity(
   val width: Int,
   val height: Int,
   val durationSeconds: Int,
+  /** Telegram's observed complete-file size; zero means unknown. */
+  val expectedSizeBytes: Long = 0L,
   val telegramFileId: Int,
   val originalStableFileIdentity: String,
   val thumbnailFileId: Int?,

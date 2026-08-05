@@ -1,0 +1,417 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 3,
+    "identityHash": "4f550cff73ab2f03ab4f647e19d490aa",
+    "entities": [
+      {
+        "tableName": "saved_media",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`accountId` INTEGER NOT NULL, `databaseGeneration` INTEGER NOT NULL, `chatId` INTEGER NOT NULL, `messageId` INTEGER NOT NULL, `mediaType` TEXT NOT NULL, `messageDateEpochSeconds` INTEGER NOT NULL, `caption` TEXT NOT NULL, `stableDisplayName` TEXT NOT NULL, `mimeType` TEXT, `width` INTEGER NOT NULL, `height` INTEGER NOT NULL, `durationSeconds` INTEGER NOT NULL, `telegramFileId` INTEGER NOT NULL, `originalStableFileIdentity` TEXT NOT NULL, `thumbnailFileId` INTEGER, `thumbnailStableFileIdentity` TEXT, `minithumbnailData` TEXT, `minithumbnailWidth` INTEGER NOT NULL, `minithumbnailHeight` INTEGER NOT NULL, `localFilePath` TEXT, `deleted` INTEGER NOT NULL, `available` INTEGER NOT NULL, `lastReconciledAtEpochMillis` INTEGER NOT NULL, PRIMARY KEY(`accountId`, `databaseGeneration`, `chatId`, `messageId`))",
+        "fields": [
+          {
+            "fieldPath": "accountId",
+            "columnName": "accountId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "databaseGeneration",
+            "columnName": "databaseGeneration",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageId",
+            "columnName": "messageId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mediaType",
+            "columnName": "mediaType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageDateEpochSeconds",
+            "columnName": "messageDateEpochSeconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "caption",
+            "columnName": "caption",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stableDisplayName",
+            "columnName": "stableDisplayName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mimeType",
+            "columnName": "mimeType",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "width",
+            "columnName": "width",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "height",
+            "columnName": "height",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationSeconds",
+            "columnName": "durationSeconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "telegramFileId",
+            "columnName": "telegramFileId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "originalStableFileIdentity",
+            "columnName": "originalStableFileIdentity",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "thumbnailFileId",
+            "columnName": "thumbnailFileId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "thumbnailStableFileIdentity",
+            "columnName": "thumbnailStableFileIdentity",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "minithumbnailData",
+            "columnName": "minithumbnailData",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "minithumbnailWidth",
+            "columnName": "minithumbnailWidth",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "minithumbnailHeight",
+            "columnName": "minithumbnailHeight",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "localFilePath",
+            "columnName": "localFilePath",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "deleted",
+            "columnName": "deleted",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "available",
+            "columnName": "available",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastReconciledAtEpochMillis",
+            "columnName": "lastReconciledAtEpochMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "accountId",
+            "databaseGeneration",
+            "chatId",
+            "messageId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_saved_media_accountId_databaseGeneration_messageDateEpochSeconds_messageId",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "databaseGeneration",
+              "messageDateEpochSeconds",
+              "messageId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_saved_media_accountId_databaseGeneration_messageDateEpochSeconds_messageId` ON `${TABLE_NAME}` (`accountId`, `databaseGeneration`, `messageDateEpochSeconds`, `messageId`)"
+          },
+          {
+            "name": "index_saved_media_accountId_databaseGeneration_mediaType",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "databaseGeneration",
+              "mediaType"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_saved_media_accountId_databaseGeneration_mediaType` ON `${TABLE_NAME}` (`accountId`, `databaseGeneration`, `mediaType`)"
+          },
+          {
+            "name": "index_saved_media_accountId_databaseGeneration_originalStableFileIdentity",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "databaseGeneration",
+              "originalStableFileIdentity"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_saved_media_accountId_databaseGeneration_originalStableFileIdentity` ON `${TABLE_NAME}` (`accountId`, `databaseGeneration`, `originalStableFileIdentity`)"
+          }
+        ]
+      },
+      {
+        "tableName": "cached_file",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`accountId` INTEGER NOT NULL, `databaseGeneration` INTEGER NOT NULL, `stableFileIdentity` TEXT NOT NULL, `tdlibFileId` INTEGER NOT NULL, `localPath` TEXT, `fileType` TEXT NOT NULL, `observedSizeBytes` INTEGER NOT NULL, `lastAccessedAtEpochMillis` INTEGER NOT NULL, `observedState` TEXT NOT NULL, PRIMARY KEY(`accountId`, `databaseGeneration`, `stableFileIdentity`))",
+        "fields": [
+          {
+            "fieldPath": "accountId",
+            "columnName": "accountId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "databaseGeneration",
+            "columnName": "databaseGeneration",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stableFileIdentity",
+            "columnName": "stableFileIdentity",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tdlibFileId",
+            "columnName": "tdlibFileId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "localPath",
+            "columnName": "localPath",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "fileType",
+            "columnName": "fileType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "observedSizeBytes",
+            "columnName": "observedSizeBytes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastAccessedAtEpochMillis",
+            "columnName": "lastAccessedAtEpochMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "observedState",
+            "columnName": "observedState",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "accountId",
+            "databaseGeneration",
+            "stableFileIdentity"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_cached_file_accountId_databaseGeneration_lastAccessedAtEpochMillis",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "databaseGeneration",
+              "lastAccessedAtEpochMillis"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_cached_file_accountId_databaseGeneration_lastAccessedAtEpochMillis` ON `${TABLE_NAME}` (`accountId`, `databaseGeneration`, `lastAccessedAtEpochMillis`)"
+          },
+          {
+            "name": "index_cached_file_accountId_databaseGeneration_observedState",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "databaseGeneration",
+              "observedState"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_cached_file_accountId_databaseGeneration_observedState` ON `${TABLE_NAME}` (`accountId`, `databaseGeneration`, `observedState`)"
+          }
+        ]
+      },
+      {
+        "tableName": "sync_state",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`accountId` INTEGER NOT NULL, `databaseGeneration` INTEGER NOT NULL, `chatId` INTEGER NOT NULL, `phase` TEXT NOT NULL, `backfillCursor` INTEGER, `headWatermark` INTEGER, `lastCheckpointAtEpochMillis` INTEGER, `lastSuccessfulCatchUpHead` INTEGER, `lastError` TEXT, `retryCount` INTEGER NOT NULL, `lastAttemptAtEpochMillis` INTEGER, `lastSuccessfulCatchUpAtEpochMillis` INTEGER, PRIMARY KEY(`accountId`, `databaseGeneration`, `chatId`))",
+        "fields": [
+          {
+            "fieldPath": "accountId",
+            "columnName": "accountId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "databaseGeneration",
+            "columnName": "databaseGeneration",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "phase",
+            "columnName": "phase",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "backfillCursor",
+            "columnName": "backfillCursor",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "headWatermark",
+            "columnName": "headWatermark",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastCheckpointAtEpochMillis",
+            "columnName": "lastCheckpointAtEpochMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastSuccessfulCatchUpHead",
+            "columnName": "lastSuccessfulCatchUpHead",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "lastError",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "retryCount",
+            "columnName": "retryCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastAttemptAtEpochMillis",
+            "columnName": "lastAttemptAtEpochMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastSuccessfulCatchUpAtEpochMillis",
+            "columnName": "lastSuccessfulCatchUpAtEpochMillis",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "accountId",
+            "databaseGeneration",
+            "chatId"
+          ]
+        }
+      },
+      {
+        "tableName": "playback_position",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`accountId` INTEGER NOT NULL, `databaseGeneration` INTEGER NOT NULL, `stableFileIdentity` TEXT NOT NULL, `positionMs` INTEGER NOT NULL, `durationMs` INTEGER NOT NULL, `updatedAtEpochMillis` INTEGER NOT NULL, PRIMARY KEY(`accountId`, `databaseGeneration`, `stableFileIdentity`))",
+        "fields": [
+          {
+            "fieldPath": "accountId",
+            "columnName": "accountId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "databaseGeneration",
+            "columnName": "databaseGeneration",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stableFileIdentity",
+            "columnName": "stableFileIdentity",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "positionMs",
+            "columnName": "positionMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMs",
+            "columnName": "durationMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMillis",
+            "columnName": "updatedAtEpochMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "accountId",
+            "databaseGeneration",
+            "stableFileIdentity"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '4f550cff73ab2f03ab4f647e19d490aa')"
+    ]
+  }
+}

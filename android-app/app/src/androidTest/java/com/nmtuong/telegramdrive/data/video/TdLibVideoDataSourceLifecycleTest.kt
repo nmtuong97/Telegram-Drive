@@ -31,6 +31,25 @@ import java.nio.file.Files
 @RunWith(AndroidJUnit4::class)
 class TdLibVideoDataSourceLifecycleTest {
   @Test
+  fun mainThreadReadIsRejectedInsteadOfBlockingUi() {
+    val coordinator = VideoStreamingCoordinator(
+      gateway = CloseTrackingGateway(),
+      fileId = 76,
+      stableFileIdentity = "remote-unique:main-thread-guard",
+    )
+    val source = TdLibVideoDataSource.Factory(
+      coordinatorFactory = { coordinator },
+      releaseFactory = { _, _ -> { coordinator.close() } },
+    ).createDataSource()
+    source.open(DataSpec(Uri.parse("tdlib://main-thread-guard")))
+
+    val error = runCatching { source.read(ByteArray(8), 0, 8) }.exceptionOrNull()
+
+    assertTrue(error is java.io.IOException)
+    source.close()
+  }
+
+  @Test
   fun closingOneOfTwoSharedDataSourcesDoesNotCloseTransfer() {
     val gateway = CloseTrackingGateway()
     val coordinator = VideoStreamingCoordinator(
@@ -68,7 +87,8 @@ class TdLibVideoDataSourceLifecycleTest {
   }
 
   @Test
-  fun media3ReopenCancelsOldReadAndPreservesSharedCoordinator() = runBlocking {
+  fun media3ReopenCancelsOldReadAndPreservesSharedCoordinator() {
+    runBlocking {
     val root = Files.createTempDirectory("tdlib-data-source-seek-").toFile()
     val gateway = RepositionGateway(root)
     val coordinator = VideoStreamingCoordinator(
@@ -124,7 +144,8 @@ class TdLibVideoDataSourceLifecycleTest {
     second.close()
     assertEquals(VideoStreamingState.CLOSED, coordinator.status.value.state)
     assertEquals(1, gateway.deleteCalls)
-    root.deleteRecursively()
+      root.deleteRecursively()
+    }
   }
 
   @Test

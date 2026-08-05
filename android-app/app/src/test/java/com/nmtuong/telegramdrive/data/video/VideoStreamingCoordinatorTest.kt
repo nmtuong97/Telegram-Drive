@@ -22,6 +22,37 @@ import org.junit.Test
 
 class VideoStreamingCoordinatorTest {
   @Test
+  fun diagnosticsTrackRangeReadAndResourceCleanupWithoutIdentifiers() = runTest {
+    VideoStreamingDiagnostics.resetForTests()
+    val root = Files.createTempDirectory("tdlib-stream-diagnostics-").toFile()
+    val gateway = RangeGateway(root, ByteArray(4_096) { 7 })
+    val coordinator = VideoStreamingCoordinator(
+      gateway = gateway,
+      fileId = 77,
+      stableFileIdentity = "remote-unique:video-77",
+      rangeSizeBytes = 256L,
+      waitTimeoutMs = 500L,
+    )
+    val reader = coordinator.openReader(128L, -1L)
+
+    assertEquals(32, coordinator.readAt(reader, 128L, ByteArray(32), 0, 32))
+    coordinator.closeReader(reader)
+    coordinator.close()
+
+    val metrics = VideoStreamingDiagnostics.snapshot()
+    assertEquals(1, metrics.coordinatorCreateCount)
+    assertEquals(1, metrics.coordinatorCloseCount)
+    assertEquals(0, metrics.activeCoordinatorCount)
+    assertEquals(1, metrics.readerOpenCount)
+    assertEquals(1, metrics.readerCloseCount)
+    assertEquals(0, metrics.activeReaderCount)
+    assertEquals(1, metrics.rangeRequestCount)
+    assertEquals(128L, metrics.rangeOffset)
+    assertEquals(32L, metrics.bytesRead)
+    root.deleteRecursively()
+  }
+
+  @Test
   fun readsInitialRangeThenSeeksWithoutFullDownload() = runTest {
     val root = Files.createTempDirectory("tdlib-stream-test-").toFile()
     val content = ByteArray(2 * 1024 * 1024) { index -> (index % 251).toByte() }

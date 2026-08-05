@@ -53,4 +53,21 @@
     <string name="open_file">Mở bằng ứng dụng khác</string>
     <string name="external_open_description">File này không hỗ trợ xem trong ứng dụng. File sẽ được chia sẻ bằng URI tạm thời chỉ đọc.</string>
     <string name="no_compatible_app">Không có ứng dụng phù hợp để mở file này.</string>
+    <string name="video_loading">Đang tải video…</string>
+    <string name="video_rebuffering">Đang tiếp tục phát…</string>
+    <string name="video_resume_notice">Tiếp tục từ %1$s</string>
+    <string name="replay">Phát lại</string>
+    <string name="seek_position">Vị trí phát</string>
+    <string name="play">Phát</string>
+    <string name="pause">Tạm dừng</string>
+    <string name="seek_back_10">Tua lùi 10 giây</string>
+    <string name="seek_forward_10">Tua tới 10 giây</string>
+    <string name="video_error_offline">Bạn đang ngoại tuyến. Kiểm tra kết nối rồi thử lại.</string>
+    <string name="video_error_slow_network">Mạng chậm. Hãy thử lại khi kết nối ổn định hơn.</string>
+    <string name="video_error_session">Phiên Telegram đã thay đổi. Quay lại màn hình tài khoản.</string>
+    <string name="video_error_unavailable">File Telegram này không còn khả dụng.</string>
+    <string name="video_error_corrupt">File video chưa hoàn chỉnh. Hãy thử lại.</string>
+    <string name="video_error_unsupported">Thiết bị này không hỗ trợ định dạng video.</string>
+    <string name="video_error_identity">Video đã thay đổi trong lúc mở. Hãy thử lại.</string>
+    <string name="video_error_unknown">Không thể phát video. Hãy thử lại.</string>
 </resources>

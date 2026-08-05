@@ -1,6 +1,7 @@
 package com.nmtuong.telegramdrive.data.video
 
 import android.net.Uri
+import android.os.Looper
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.annotation.OptIn
@@ -55,6 +56,9 @@ class TdLibVideoDataSource(
   override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
     if (length == 0) return 0
     if (remainingBytes == 0L) return C.RESULT_END_OF_INPUT
+    if (Looper.myLooper() == Looper.getMainLooper()) {
+      throw IOException("TDLib video reads must run on Media3's loading thread")
+    }
     return try {
       val requested = if (remainingBytes == C.LENGTH_UNSET.toLong()) length else minOf(length.toLong(), remainingBytes).toInt()
       val activeCoordinator = checkNotNull(coordinator)
