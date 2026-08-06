@@ -64,6 +64,12 @@ class VideoPlaybackRulesTest {
   }
 
   @Test
+  fun terminalAndUnknownFailuresDoNotOfferRetry() {
+    assertFalse(isRetryableVideoPlaybackError(VideoPlaybackErrorKind.RemoteFileUnavailable))
+    assertFalse(isRetryableVideoPlaybackError(VideoPlaybackErrorKind.UnknownPlaybackFailure))
+  }
+
+  @Test
   fun mapsNestedTimeoutCauseWhenTopLevelMessageIsGeneric() {
     val nested = java.net.SocketTimeoutException("remote read timed out")
     val topLevel = IllegalStateException("Playback failed", nested)

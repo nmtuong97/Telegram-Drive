@@ -149,12 +149,10 @@ internal fun classifyVideoPlaybackFailure(
 }
 
 internal fun isRetryableVideoPlaybackError(kind: VideoPlaybackErrorKind?): Boolean =
-  kind == null || kind in setOf(
+  kind in setOf(
     VideoPlaybackErrorKind.Offline,
     VideoPlaybackErrorKind.TimeoutOrSlowNetwork,
-    VideoPlaybackErrorKind.RemoteFileUnavailable,
     VideoPlaybackErrorKind.CorruptOrIncompleteFile,
-    VideoPlaybackErrorKind.UnknownPlaybackFailure,
   )
 
 internal fun isExpectedVideoPlaybackCancellation(error: PlaybackException): Boolean {

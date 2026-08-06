@@ -1,9 +1,26 @@
 # Phase 3 progress — Saved Messages Local Media Gallery
 
-Status: `BLOCKED — PHASE_3_NOT_COMPLETE`
+## Current gallery hardening handoff — 2026-08-06
+
+Status: `IMPLEMENTED — PENDING_USER_VERIFICATION`
+
+- Gallery now uses a deterministic regular grid (2 portrait, 3 wide, 4 tablet)
+  with no month grouping or separator items; date is rendered in each card.
+- Gallery presentation models provide metadata and explicit Local/Remote/Partial/
+  Downloading/Unavailable availability without filesystem inference in Composables.
+- Thumbnails use cancellable background decoding, target-size downsampling, a
+  120-entry/16 MiB LRU cache, duplicate-request coalescing, and account clearing.
+- Video source selection, multi-reader seek supersession, local-path validation,
+  retry classification, and lifecycle/resource regression coverage were extended.
+- Automated validation: unit tests PASS; Android test compilation PASS; lint PASS;
+  fake and real-source debug builds PASS; connected fake tests were not run because
+  only the session-preserving `emulator-5554` was available.
+- Manual device verification: `PENDING_USER_VERIFICATION`.
+
+Historical baseline status: `BLOCKED — PHASE_3_NOT_COMPLETE`
 
 This report records evidence from the canonical `main` checkout and the current
-uncommitted defect-closure worktree. It does not upgrade implementation evidence
+feature-branch worktree. It does not upgrade implementation evidence
 into real-account evidence.
 
 ## Baseline and source of truth
@@ -39,7 +56,7 @@ into real-account evidence.
   transaction checkpoints, listener UPSERTs, bounded catch-up, and new/edit/delete
   handling.
 - Room Paging gallery with local search, media filter, local-file filter, sort toggle,
-  month label, minithumbnail/placeholder rendering, and sync state/error UI.
+  per-item date, minithumbnail/placeholder rendering, and sync state/error UI.
 - Bounded and deduplicated thumbnail access, cache eviction limit of 200 thumbnail
   entries with oldest-first eviction, original-file reconciliation against TDLib plus readable filesystem bytes,
   stale-thumbnail reload, and TDLib-mediated temporary-file cleanup.

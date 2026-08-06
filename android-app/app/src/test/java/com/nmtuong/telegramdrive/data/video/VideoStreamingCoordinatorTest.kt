@@ -180,6 +180,29 @@ class VideoStreamingCoordinatorTest {
     assertTrue(gateway.cancelCalls > 0)
     coordinator.close()
   }
+
+  @Test
+  fun seekSupersedesAWaitingReaderNotOwnedByDefaultCursor() = runTest {
+    val gateway = BlockingRangeGateway()
+    val coordinator = VideoStreamingCoordinator(
+      gateway = gateway,
+      fileId = 81,
+      stableFileIdentity = "remote-unique:reader-seek",
+      waitTimeoutMs = 2_000L,
+    )
+    val reader = coordinator.openReader(0L, -1L)
+    val read = async { coordinator.readAt(reader, 0L, ByteArray(32), 0, 32) }
+    withTimeout(1_000L) {
+      while (gateway.rangeRequests == 0) delay(10L)
+    }
+
+    coordinator.seek(8_192L)
+
+    val result = withTimeout(1_000L) { runCatching { read.await() } }
+    assertTrue(result.isFailure)
+    assertTrue(gateway.cancelCalls > 0)
+    coordinator.close()
+  }
 }
 
 private class RangeGateway(

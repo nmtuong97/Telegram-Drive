@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
-import androidx.paging.insertSeparators
 import androidx.paging.map
 import com.nmtuong.telegramdrive.data.AccountSessionIdentityProvider
 import com.nmtuong.telegramdrive.data.GalleryQuery
@@ -29,7 +28,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.io.File
 
 class GalleryViewModel(
   private val repository: SavedMediaRepository,
@@ -42,23 +40,22 @@ class GalleryViewModel(
   val syncState: StateFlow<SyncStateEntity?> = _syncState.asStateFlow()
   private val _syncResult = MutableStateFlow<SavedMediaSyncResult?>(null)
   val syncResult: StateFlow<SavedMediaSyncResult?> = _syncResult.asStateFlow()
+  private val _currentIdentity = MutableStateFlow(identityProvider.currentIdentity.value)
+  val currentIdentity: StateFlow<com.nmtuong.telegramdrive.domain.AccountSessionIdentity?> = _currentIdentity.asStateFlow()
   private val _thumbnailPaths = MutableStateFlow<Map<String, String>>(emptyMap())
   val thumbnailPaths: StateFlow<Map<String, String>> = _thumbnailPaths.asStateFlow()
   private val _openState = MutableStateFlow<GalleryOpenState>(GalleryOpenState.Idle)
   val openState: StateFlow<GalleryOpenState> = _openState.asStateFlow()
   private var lastOpenEntity: SavedMediaEntity? = null
   private var syncJob: Job? = null
+  private val thumbnailJobs = mutableMapOf<String, Job>()
 
   @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
-  val pagingData: Flow<PagingData<GalleryGridItem>> = _query
+  internal val pagingData: Flow<PagingData<GalleryItemUiModel>> = _query
     .debounce(150)
     .distinctUntilChanged()
     .flatMapLatest(repository::paging)
-    .map { paging ->
-      paging
-        .map { entity -> GalleryGridItem.Media(entity) }
-        .insertSeparators { before, after -> monthHeaderFor(before, after) }
-    }
+    .map { paging -> paging.map { entity -> galleryItemUiModel(entity, identityProvider.currentIdentity.value) } }
     .cachedIn(viewModelScope)
 
   init {
@@ -69,7 +66,10 @@ class GalleryViewModel(
     viewModelScope.launch {
       identityProvider.currentIdentity
         .collect { identity ->
+          _currentIdentity.value = identity
           syncJob?.cancel()
+          thumbnailJobs.values.forEach(Job::cancel)
+          thumbnailJobs.clear()
           _syncResult.value = null
           _syncState.value = null
           _thumbnailPaths.value = emptyMap()
@@ -100,19 +100,32 @@ class GalleryViewModel(
   }
 
   fun loadThumbnail(entity: SavedMediaEntity) {
-    val key = entity.thumbnailStableFileIdentity ?: return
-    val existingPath = _thumbnailPaths.value[key]
-    if (existingPath != null && File(existingPath).isFile && File(existingPath).canRead()) return
-    if (existingPath != null) _thumbnailPaths.update { it - key }
-    viewModelScope.launch {
-      mediaAccess.ensureThumbnail(entity)?.let { path ->
-        _thumbnailPaths.update { it + (key to path) }
+    val key = entity.thumbnailStableFileIdentity
+      ?: entity.thumbnailFileId?.let { "tdlib-file:$it" }
+      ?: return
+    if (_thumbnailPaths.value[key] != null) return
+    thumbnailJobs[key]?.cancel()
+    val requestIdentity = identityProvider.currentIdentity.value ?: return
+    thumbnailJobs[key] = viewModelScope.launch {
+      try {
+        mediaAccess.ensureThumbnail(entity)?.let { path ->
+          if (identityProvider.currentIdentity.value == requestIdentity) {
+            _thumbnailPaths.update { it + (key to path) }
+          }
+        }
+      } finally {
+        thumbnailJobs.remove(key)
       }
     }
   }
 
   fun openMedia(entity: SavedMediaEntity) {
     if (_openState.value is GalleryOpenState.Loading || _openState.value is GalleryOpenState.Opened) return
+    val item = galleryItemUiModel(entity, identityProvider.currentIdentity.value)
+    if (item.availability == GalleryFileAvailability.UNAVAILABLE) {
+      _openState.value = GalleryOpenState.Unavailable
+      return
+    }
     lastOpenEntity = entity
     if (entity.mediaType == "VIDEO") {
       // Opening a video must never wait for a fixed remote prefix. The player
@@ -146,6 +159,7 @@ internal fun shouldPublishSyncResult(
 sealed interface GalleryOpenState {
   data object Idle : GalleryOpenState
   data object Loading : GalleryOpenState
+  data object Unavailable : GalleryOpenState
   data class Opened(val entity: SavedMediaEntity, val path: String) : GalleryOpenState
   data class Failed(val message: String) : GalleryOpenState
 }
