@@ -51,61 +51,13 @@ This project is indexed by GitNexus as **Telegram-Drive** (7354 symbols, 14767 r
 
 ## Ứng dụng Android độc lập & Quy trình Android CLI
 
-- Project nằm tại `android-app/`; không sửa `app/src-tauri/gen/android` vì đó là output generated của Tauri.
-- Dùng Kotlin, Compose, Kotlin DSL, minSdk 26 và application ID `com.nmtuong.telegramdrive`.
-- Dependency hướng vào trong: UI/feature → repository → gateway; UI/domain không import `org.drinkless.tdlib`.
-- TDLib chỉ lấy từ source Telegram chính thức và build bằng `scripts/build-tdlib-android.sh`; không thêm binary bên thứ ba.
-- TDLib pin commit `022d60202e446ad1287b9fb68e687c8a0760788b`; crypto pin OpenSSL 3.5.7 LTS với checksum trong script; metadata/hash binary ở `android-app/tdlib-build-metadata.txt`.
-- Real/fake source chọn bằng Gradle property `-PtelegramDataSource=real|fake`; không đưa credential/session thật vào source hoặc artifact.
-- Android backup và device transfer phải giữ trạng thái disabled/excluded cho toàn bộ account, TDLib database/session/key, cache và downloaded media.
-- TDLib gateway có lifecycle state machine application-owned; không dùng `Application.onTerminate()` làm cleanup production. Logout/reset/test teardown là explicit close owners; process kill được xem là abrupt.
-- Phase 2 tập trung vào vertical slice Saved Messages Paging → Download → Preview → Logout/Reset; không mở rộng sang Audio, PDF, External Open, Room, global gallery, background transfer, streaming, remote release/CI/CD, MCP hoặc Lightbuild. Local real APK handoff is governed by the Local Android distribution section below.
+**QUAN TRỌNG:** Toàn bộ hướng dẫn về kiến trúc Android, sử dụng Android CLI, và quy trình Gradle (bao gồm Local Android distribution) đã được chuẩn hóa tại Canonical Orchestration Workflow.
 
-### Tận dụng Android CLI trong phát triển Android (`android-cli`)
+👉 **Mọi AI Agent PHẢI tuân thủ nguồn sự thật duy nhất tại:** `.agents/orchestration_workflow.md`
 
-Tất cả AI Agent (Antigravity, Codex, Copilot, Subagents) khi làm việc trong `android-app/` PHẢI tận dụng sức mạnh của `android` CLI:
+Không sử dụng các quy tắc tự diễn giải ngoài tài liệu trên.
 
-1. **Tra cứu tài liệu chuẩn (Android Documentation Lookup)**:
-   - Dùng `android docs search "<keyword>"` để tìm tài liệu chính thức từ Android Knowledge Base.
-   - Dùng `android docs fetch "kb://..."` với URL `kb://` được trả về từ lệnh search để xem chi tiết. Không truyền arbitrary web URL cho `android docs fetch`.
+## Antigravity Executor (Codex-orchestrated mode)
 
-2. **Kiểm tra UI Layout tự động (Layout Hierarchy Inspection)**:
-   - Khi ứng dụng đang chạy trên Emulator hoặc thiết bị thật, dùng `android layout --pretty --output=<file.json>` để lấy cây giao diện dưới dạng JSON. Dùng `android layout --diff` để so sánh layout.
-
-3. **Xác minh trực quan (Visual Screenshots)**:
-   - Chỉ sử dụng `android screen capture --output=<file.png>` (kèm `--annotate` nếu cần) để chụp ảnh màn hình thiết bị. Không sử dụng command `android screenshot`.
-
-4. **Triển khai & Chạy ứng dụng (Deploy & Run)**:
-   - `android run` không tự động build APK.
-   - Bước 1: Build APK bằng bounded Gradle task: `./gradlew :app:assembleDebug -PtelegramDataSource=real --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`.
-   - Bước 2: Xác định APK path từ project metadata: `android describe --project_dir=android-app`.
-   - Bước 3: Deploy: `android run --apks=<resolved-apk-path> --device=<serial-if-needed> --activity=<resolved-launcher-activity>`.
-
-5. **Quản lý SDK & Emulator (SDK & AVD Management)**:
-   - Sử dụng `android sdk list`, `android sdk install <package>`, `android emulator list`, `android emulator start <name>` để kiểm tra và quản lý môi trường Android SDK/AVD khi cần thiết.
-
-6. **Xác minh bắt buộc trước handoff (Mandatory Handoff Verification)**:
-   - Tại một thời điểm chỉ được có một Gradle invocation cho `android-app`.
-   - Agent phải kiểm tra process trước khi chạy Gradle và không được tự retry nếu invocation trước chưa terminate.
-   - Agent không được chạy biến thể `--info` và non-`--info` song song.
-   - Full test, lint và build phải chạy tuần tự qua script single-flight guard `./scripts/run-gradle-single-flight.sh`.
-   - Không chạy lệnh gộp không giới hạn `./gradlew testDebugUnitTest lintDebug assembleDebug`.
-   - Luôn chạy từng Gradle task riêng biệt có timeout và flags diagnostic:
-     - `./scripts/run-gradle-single-flight.sh :app:testDebugUnitTest --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
-     - `./scripts/run-gradle-single-flight.sh :app:lintDebug --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
-     - `./scripts/run-gradle-single-flight.sh :app:assembleDebug -PtelegramDataSource=real --no-daemon --no-configuration-cache --no-parallel --max-workers=1 --console=plain --stacktrace`
-   - Dùng Android CLI/adb để install, launch, dump layout hoặc chụp screenshot trước khi báo hoàn tất công việc.
-
-### Local Android distribution
-
-Sau khi hoàn thành một task Android và implementation đã sẵn sàng để người dùng kiểm tra trên thiết bị:
-
-Use the project skill at `.agents/skills/local-android-distribution/SKILL.md` for the complete handoff procedure.
-
-1. Với task có thay đổi implementation và đã sẵn sàng handoff, tự động chạy `TELEGRAM_DATA_SOURCE=real ./scripts/distribute-local.sh "<task name>"`.
-2. Chỉ dùng `--fast` cho vòng lặp UI nhỏ được yêu cầu rõ ràng; vẫn phải giữ `TELEGRAM_DATA_SOURCE=real`.
-3. Chỉ bỏ qua upload cho task read-only hoặc khi người dùng yêu cầu không upload.
-4. Không dùng `fake` cho APK tester-facing và không fallback âm thầm khi thiếu Telegram/Firebase config hoặc authentication.
-5. Không báo tính năng đã được xác nhận chỉ vì build hoặc upload thành công.
-6. Sau khi upload thành công, báo `READY_FOR_DEVICE_VERIFICATION` cùng branch, commit, build mode, Telegram data source, checks, APK path, Firebase upload result, manual checks, known limitations, và working-tree state.
-7. Nếu test, lint, build, Firebase authentication hoặc upload thất bại thì không báo thành công; sửa lỗi trong phạm vi task hoặc báo `BLOCKED` với nguyên nhân cụ thể.
+Dự án hỗ trợ mode Codex-orchestrated, trong đó Codex đóng vai trò điều phối, review, và Antigravity là primary executor.
+Chi tiết xem tại `.agents/skills/antigravity-executor/SKILL.md`.
