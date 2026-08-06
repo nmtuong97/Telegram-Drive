@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
+import androidx.paging.insertSeparators
+import androidx.paging.map
+import com.nmtuong.telegramdrive.data.AccountSessionIdentityProvider
 import com.nmtuong.telegramdrive.data.GalleryQuery
 import com.nmtuong.telegramdrive.data.GalleryMediaFilter
 import com.nmtuong.telegramdrive.data.MediaAccessCoordinator
@@ -14,13 +17,16 @@ import com.nmtuong.telegramdrive.data.local.SavedMediaEntity
 import com.nmtuong.telegramdrive.data.local.SyncStateEntity
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
@@ -28,6 +34,7 @@ import java.io.File
 class GalleryViewModel(
   private val repository: SavedMediaRepository,
   private val mediaAccess: MediaAccessCoordinator,
+  private val identityProvider: AccountSessionIdentityProvider,
 ) : ViewModel() {
   private val _query = MutableStateFlow(GalleryQuery())
   val query: StateFlow<GalleryQuery> = _query.asStateFlow()
@@ -40,12 +47,18 @@ class GalleryViewModel(
   private val _openState = MutableStateFlow<GalleryOpenState>(GalleryOpenState.Idle)
   val openState: StateFlow<GalleryOpenState> = _openState.asStateFlow()
   private var lastOpenEntity: SavedMediaEntity? = null
+  private var syncJob: Job? = null
 
   @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
-  val pagingData: Flow<PagingData<SavedMediaEntity>> = _query
+  val pagingData: Flow<PagingData<GalleryGridItem>> = _query
     .debounce(150)
     .distinctUntilChanged()
     .flatMapLatest(repository::paging)
+    .map { paging ->
+      paging
+        .map { entity -> GalleryGridItem.Media(entity) }
+        .insertSeparators { before, after -> monthHeaderFor(before, after) }
+    }
     .cachedIn(viewModelScope)
 
   init {
@@ -53,7 +66,18 @@ class GalleryViewModel(
     viewModelScope.launch {
       repository.observeCurrentSyncState().collect { _syncState.value = it }
     }
-    refreshSync()
+    viewModelScope.launch {
+      identityProvider.currentIdentity
+        .collect { identity ->
+          syncJob?.cancel()
+          _syncResult.value = null
+          _syncState.value = null
+          _thumbnailPaths.value = emptyMap()
+          _openState.value = GalleryOpenState.Idle
+          lastOpenEntity = null
+          if (identity != null) refreshSync()
+        }
+    }
   }
 
   fun setSearch(search: String) = _query.update { it.copy(search = search) }
@@ -65,7 +89,14 @@ class GalleryViewModel(
   fun toggleSort() = _query.update { it.copy(newestFirst = !it.newestFirst) }
 
   fun refreshSync() {
-    viewModelScope.launch { _syncResult.value = repository.syncSavedMessages() }
+    val requestIdentity = identityProvider.currentIdentity.value ?: return
+    if (syncJob?.isActive == true) return
+    syncJob = viewModelScope.launch {
+      val result = repository.syncSavedMessages()
+      if (shouldPublishSyncResult(requestIdentity, identityProvider.currentIdentity.value)) {
+        _syncResult.value = result
+      }
+    }
   }
 
   fun loadThumbnail(entity: SavedMediaEntity) {
@@ -106,6 +137,11 @@ class GalleryViewModel(
     _openState.value = GalleryOpenState.Idle
   }
 }
+
+internal fun shouldPublishSyncResult(
+  requestIdentity: com.nmtuong.telegramdrive.domain.AccountSessionIdentity,
+  currentIdentity: com.nmtuong.telegramdrive.domain.AccountSessionIdentity?,
+): Boolean = requestIdentity == currentIdentity
 
 sealed interface GalleryOpenState {
   data object Idle : GalleryOpenState

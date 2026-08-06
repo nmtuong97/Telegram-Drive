@@ -56,6 +56,7 @@
     <string name="video_loading">Đang tải video…</string>
     <string name="video_rebuffering">Đang tiếp tục phát…</string>
     <string name="video_resume_notice">Tiếp tục từ %1$s</string>
+    <string name="video_duration_unknown">Chưa xác định thời lượng</string>
     <string name="replay">Phát lại</string>
     <string name="seek_position">Vị trí phát</string>
     <string name="play">Phát</string>

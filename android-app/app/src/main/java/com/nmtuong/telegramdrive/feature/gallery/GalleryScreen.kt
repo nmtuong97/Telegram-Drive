@@ -75,9 +75,6 @@ import com.nmtuong.telegramdrive.data.local.SavedMediaEntity
 import com.nmtuong.telegramdrive.data.local.SyncStateEntity
 import com.nmtuong.telegramdrive.ui.theme.TelegramDriveTheme
 import java.io.File
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -174,6 +171,7 @@ fun GalleryScreen(
           items.itemCount == 0 -> {
             EmptyPanel(
               syncState = syncState,
+              canRetrySync = syncPresentation.showRetry,
               hasActiveQuery = hasActiveQuery,
               onRetry = viewModel::refreshSync,
               onClearQuery = {
@@ -332,20 +330,21 @@ private fun GalleryControls(
     }
     FilledTonalButton(
       onClick = onSync,
-      enabled = !syncPresentation.isActive,
+      enabled = syncPresentation.syncEnabled && !syncPresentation.isActive,
     ) {
       Text(if (syncPresentation.isActive) "Syncing…" else "⟳  Sync")
     }
   }
 }
 
-private data class SyncPresentation(
+internal data class SyncPresentation(
   val label: String,
   val isActive: Boolean,
   val showRetry: Boolean,
+  val syncEnabled: Boolean,
 )
 
-private fun syncPresentation(
+internal fun syncPresentation(
   state: SyncStateEntity?,
   result: SavedMediaSyncResult?,
 ): SyncPresentation {
@@ -355,14 +354,20 @@ private fun syncPresentation(
     MediaSyncPhase.CATCHING_UP.name,
   )
   return when {
-    active -> SyncPresentation("Syncing saved media…", isActive = true, showRetry = false)
-    state?.phase == MediaSyncPhase.ERROR.name || result is SavedMediaSyncResult.Failed ->
-      SyncPresentation("Sync couldn't complete", isActive = false, showRetry = true)
+    active -> SyncPresentation("Syncing saved media…", isActive = true, showRetry = false, syncEnabled = false)
+    result is SavedMediaSyncResult.Failed -> SyncPresentation(
+      label = if (result.retryable) "Sync couldn't complete" else "Sync unavailable",
+      isActive = false,
+      showRetry = result.retryable,
+      syncEnabled = result.retryable,
+    )
+    state?.phase == MediaSyncPhase.ERROR.name ->
+      SyncPresentation("Sync couldn't complete", isActive = false, showRetry = true, syncEnabled = true)
     state?.phase == MediaSyncPhase.COMPLETED.name || result is SavedMediaSyncResult.Completed ->
-      SyncPresentation("Up to date", isActive = false, showRetry = false)
+      SyncPresentation("Up to date", isActive = false, showRetry = false, syncEnabled = true)
     state?.phase == MediaSyncPhase.IDLE.name ->
-      SyncPresentation("Ready to sync", isActive = false, showRetry = false)
-    else -> SyncPresentation("Preparing your gallery…", isActive = false, showRetry = false)
+      SyncPresentation("Ready to sync", isActive = false, showRetry = false, syncEnabled = true)
+    else -> SyncPresentation("Preparing your gallery…", isActive = false, showRetry = false, syncEnabled = true)
   }
 }
 
@@ -416,7 +421,7 @@ private fun OpenStatus(openState: GalleryOpenState, onRetry: () -> Unit) {
 
 @Composable
 private fun GalleryGrid(
-  items: androidx.paging.compose.LazyPagingItems<SavedMediaEntity>,
+  items: androidx.paging.compose.LazyPagingItems<GalleryGridItem>,
   thumbnailPaths: Map<String, String>,
   state: LazyGridState,
   onLoadThumbnail: (SavedMediaEntity) -> Unit,
@@ -436,24 +441,25 @@ private fun GalleryGrid(
     items(
       count = items.itemCount,
       key = { index ->
-        items.peek(index)?.let { "${it.chatId}:${it.messageId}" } ?: "placeholder:$index"
+        items.peek(index)?.stableKey ?: "placeholder:$index"
+      },
+      span = { index ->
+        if (items.peek(index) is GalleryGridItem.MonthHeader) GridItemSpan(maxLineSpan)
+        else GridItemSpan(1)
       },
     ) { index ->
-      items[index]?.let { entity ->
-        LaunchedEffect(entity.thumbnailStableFileIdentity) { onLoadThumbnail(entity) }
-        Column(
-          modifier = Modifier.fillMaxWidth(),
-          verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-          if (index == 0 || monthKey(entity) != monthKey(items.peek(index - 1))) {
-            MonthHeader(monthKey(entity))
-          }
+      when (val item = items[index]) {
+        is GalleryGridItem.MonthHeader -> MonthHeader(item.month)
+        is GalleryGridItem.Media -> {
+          val entity = item.entity
+          LaunchedEffect(entity.thumbnailStableFileIdentity) { onLoadThumbnail(entity) }
           GalleryTile(
             entity = entity,
             thumbnailPath = entity.thumbnailStableFileIdentity?.let(thumbnailPaths::get),
             onClick = { onOpenMedia(entity) },
           )
         }
+        null -> Unit
       }
     }
     if (items.loadState.append is LoadState.Loading) {
@@ -612,6 +618,7 @@ private fun InitialLoadingPanel() {
 @Composable
 private fun EmptyPanel(
   syncState: SyncStateEntity?,
+  canRetrySync: Boolean,
   hasActiveQuery: Boolean,
   onRetry: () -> Unit,
   onClearQuery: () -> Unit,
@@ -623,15 +630,15 @@ private fun EmptyPanel(
     MediaSyncPhase.CATCHING_UP.name,
   )
   val title = when {
-    syncError -> "Sync couldn't complete"
     isSyncing -> "Syncing saved media…"
     hasActiveQuery -> "No matching media"
+    syncError -> "Sync couldn't complete"
     else -> "No saved media yet"
   }
   val message = when {
-    syncError -> "Try again to refresh your saved media."
     isSyncing -> "Your media will appear here as it is indexed."
     hasActiveQuery -> "Try another search or filter."
+    syncError -> "Try again to refresh your saved media."
     else -> "Media saved in Telegram will appear here."
   }
 
@@ -649,8 +656,9 @@ private fun EmptyPanel(
     )
     Spacer(Modifier.height(16.dp))
     when {
-      syncError || !hasActiveQuery -> Button(onClick = onRetry) { Text("Try again") }
-      else -> TextButton(onClick = onClearQuery) { Text("Clear search & filters") }
+      hasActiveQuery -> TextButton(onClick = onClearQuery) { Text("Clear search & filters") }
+      canRetrySync -> Button(onClick = onRetry) { Text("Try again") }
+      else -> Unit
     }
   }
 }
@@ -713,18 +721,6 @@ private fun formatDuration(seconds: Int): String {
   }
 }
 
-private val monthFormatter = DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault())
-
-private fun monthKey(entity: SavedMediaEntity?): String = entity?.let {
-  if (it.messageDateEpochSeconds <= 0L) {
-    "Unknown date"
-  } else {
-    Instant.ofEpochSecond(it.messageDateEpochSeconds)
-      .atZone(ZoneId.systemDefault())
-      .format(monthFormatter)
-  }
-} ?: "Unknown date"
-
 private enum class GalleryPreviewState { CONTENT, SYNCING, LOADING, EMPTY, NO_RESULTS, ERROR }
 
 @Composable
@@ -733,9 +729,10 @@ private fun GalleryPreviewFrame(
   query: GalleryQuery = GalleryQuery(),
   searchText: String = query.search,
   syncState: SyncStateEntity? = null,
+  syncResult: SavedMediaSyncResult? = null,
   items: List<SavedMediaEntity> = previewItems(),
 ) {
-  val presentation = syncPresentation(syncState, null)
+  val presentation = syncPresentation(syncState, syncResult)
   Scaffold(
     modifier = Modifier.fillMaxSize(),
     containerColor = MaterialTheme.colorScheme.background,
@@ -759,8 +756,8 @@ private fun GalleryPreviewFrame(
           GalleryPreviewState.SYNCING,
           -> PreviewGalleryGrid(items)
           GalleryPreviewState.LOADING -> InitialLoadingPanel()
-          GalleryPreviewState.EMPTY -> EmptyPanel(null, false, {}, {})
-          GalleryPreviewState.NO_RESULTS -> EmptyPanel(null, true, {}, {})
+          GalleryPreviewState.EMPTY -> EmptyPanel(null, presentation.showRetry, false, {}, {})
+          GalleryPreviewState.NO_RESULTS -> EmptyPanel(null, presentation.showRetry, true, {}, {})
           GalleryPreviewState.ERROR -> GalleryErrorPanel {}
         }
       }
@@ -770,7 +767,17 @@ private fun GalleryPreviewFrame(
 
 @Composable
 private fun PreviewGalleryGrid(items: List<SavedMediaEntity>) {
-  val previewItems = remember(items) { items }
+  val previewItems = remember(items) {
+    buildList<GalleryGridItem> {
+      var previousMonth: String? = null
+      items.forEach { entity ->
+        val month = galleryMonthKey(entity)
+        if (month != previousMonth) add(GalleryGridItem.MonthHeader(month))
+        add(GalleryGridItem.Media(entity))
+        previousMonth = month
+      }
+    }
+  }
   LazyVerticalGrid(
     columns = GridCells.Adaptive(minSize = 156.dp),
     modifier = Modifier.fillMaxSize(),
@@ -778,13 +785,20 @@ private fun PreviewGalleryGrid(items: List<SavedMediaEntity>) {
     horizontalArrangement = Arrangement.spacedBy(10.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp),
   ) {
-    items(previewItems, key = { "preview:${it.messageId}" }) { entity ->
-      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        val index = previewItems.indexOf(entity)
-        if (index == 0 || monthKey(entity) != monthKey(previewItems[index - 1])) {
-          MonthHeader(monthKey(entity))
+    items(
+      previewItems,
+      key = { it.stableKey },
+      span = { item ->
+        if (item is GalleryGridItem.MonthHeader) GridItemSpan(maxLineSpan) else GridItemSpan(1)
+      },
+    ) { item ->
+      when (item) {
+        is GalleryGridItem.MonthHeader -> MonthHeader(item.month)
+        is GalleryGridItem.Media -> {
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            GalleryTile(item.entity, thumbnailPath = null, onClick = {})
+          }
         }
-        GalleryTile(entity, thumbnailPath = null, onClick = {})
       }
     }
   }
@@ -865,6 +879,40 @@ private fun GalleryNoResultsPreview() {
 @Composable
 private fun GalleryErrorPreview() {
   TelegramDriveTheme { GalleryPreviewFrame(GalleryPreviewState.ERROR) }
+}
+
+@Preview(name = "Non-retryable error", showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+private fun GalleryNonRetryableErrorPreview() {
+  TelegramDriveTheme {
+    GalleryPreviewFrame(
+      state = GalleryPreviewState.EMPTY,
+      syncResult = SavedMediaSyncResult.Failed("Account is not ready", retryable = false),
+    )
+  }
+}
+
+@Preview(name = "Unicode filename", showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+private fun GalleryUnicodeFilenamePreview() {
+  TelegramDriveTheme {
+    GalleryPreviewFrame(
+      state = GalleryPreviewState.CONTENT,
+      syncState = previewCompletedSyncState(),
+      items = listOf(previewEntity(20, "旅行写真_مرحبا_очень-длинное-название.jpg", "IMAGE", 0, 1_725_000_000L)),
+    )
+  }
+}
+
+@Preview(name = "Large text landscape", showBackground = true, widthDp = 844, heightDp = 390, fontScale = 1.3f)
+@Composable
+private fun GalleryLargeTextLandscapePreview() {
+  TelegramDriveTheme {
+    GalleryPreviewFrame(
+      state = GalleryPreviewState.CONTENT,
+      syncState = previewCompletedSyncState(),
+    )
+  }
 }
 
 @Preview(name = "Long filename", showBackground = true, widthDp = 320, heightDp = 844, uiMode = Configuration.UI_MODE_NIGHT_YES)
