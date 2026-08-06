@@ -174,7 +174,7 @@ class VideoStreamingCoordinator(
   fun seek(position: Long) {
     if (closed.get()) return
     positionBytes = position.coerceAtLeast(0L)
-    defaultReader.cancellationVersion.value++
+    readers.values.forEach { reader -> reader.cancellationVersion.value++ }
     gateway.cancelFileRange(fileId)
     streamingLog("seek position=${positionBytes}")
     _status.value = _status.value.copy(

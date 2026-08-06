@@ -7,6 +7,7 @@ import com.nmtuong.telegramdrive.data.video.VideoStreamingDiagnostics
 import com.nmtuong.telegramdrive.domain.AccountSessionIdentity
 import com.nmtuong.telegramdrive.domain.VideoPlaybackRequest
 import java.util.ArrayDeque
+import java.nio.file.Files
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
@@ -168,6 +169,26 @@ class VideoPlayerViewModelEngineTest {
     }
   }
 
+  @Test
+  fun verifiedCompleteLocalSourceDoesNotCreateStreamingDataSource() = playbackTest {
+    val path = Files.createTempFile("complete-video-", ".mp4").toFile().also { it.writeBytes(ByteArray(1_000)) }
+    val gateway = FakePlaybackGateway(localPath = path.absolutePath)
+    val engine = FakeVideoPlayerEngine()
+    val viewModel = VideoPlayerViewModel(request().copy(localPath = path.absolutePath), gateway, QueueEngineFactory(), FakePlaybackClock())
+
+    try {
+      viewModel.initializeForTests(engine)
+      runCurrent()
+
+      assertEquals("local", viewModel.uiState.value.sourceLabel)
+      assertEquals(0, gateway.streamingFactoryCalls)
+    } finally {
+      viewModel.closePlayback()
+      runCurrent()
+      path.delete()
+    }
+  }
+
   private fun playbackTest(block: suspend TestScope.() -> Unit) = runTest {
     Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
     block()
@@ -188,14 +209,17 @@ class VideoPlayerViewModelEngineTest {
     minithumbnailData = null,
   )
 
-  private class FakePlaybackGateway : VideoPlaybackGateway {
+  private class FakePlaybackGateway(private val localPath: String? = null) : VideoPlaybackGateway {
     val savedPositions = mutableListOf<PlaybackPositionSnapshot>()
     var closeCount = 0
+    var streamingFactoryCalls = 0
 
     override suspend fun loadPosition(request: VideoPlaybackRequest): Long? = null
-    override suspend fun resolveLocalPath(request: VideoPlaybackRequest): String? = null
-    override fun streamingDataSourceFactory(request: VideoPlaybackRequest): DataSource.Factory =
-      DataSource.Factory { throw UnsupportedOperationException("Fake engine never opens a DataSource") }
+    override suspend fun resolveLocalPath(request: VideoPlaybackRequest): String? = localPath
+    override fun streamingDataSourceFactory(request: VideoPlaybackRequest): DataSource.Factory {
+      streamingFactoryCalls++
+      return DataSource.Factory { throw UnsupportedOperationException("Fake engine never opens a DataSource") }
+    }
 
     override suspend fun savePosition(request: VideoPlaybackRequest, positionMs: Long, durationMs: Long) {
       savedPositions += PlaybackPositionSnapshot(positionMs, durationMs)

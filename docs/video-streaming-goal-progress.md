@@ -1,8 +1,25 @@
 # Video Streaming Goal Progress
 
+## Current gallery/streaming hardening handoff — 2026-08-06
+
+Status: `IMPLEMENTED — PENDING_USER_VERIFICATION`
+
+- Gallery month separators were removed in favor of a deterministic regular grid;
+  per-item date and video/image metadata are now presented through localized UI models.
+- Thumbnail decoding runs off the main thread with downsampling, cancellation,
+  account-scoped clearing, duplicate-request coalescing, and bounded eviction.
+- Streaming hardening covers verified complete-local selection, partial/stale fallback
+  to range streaming, final-seek-wins cancellation, recoverable retry classification,
+  and player/reader/coordinator lifecycle regression tests.
+- Automated validation: unit tests PASS; Android test compilation PASS; lint PASS;
+  fake and real-source debug builds PASS; connected fake tests were not run because
+  only the session-preserving `emulator-5554` was available.
+- Manual device verification: `PENDING_USER_VERIFICATION`.
+
 ## Status
 
-`BLOCKED` for the goal’s final completion rule. The streaming-first implementation, automated tests, Android gates, and real-source launch are complete. On 2026-08-04, `emulator-5554` had a Ready session and a populated real Gallery. The source now contains a debug-only, aggregate-only ADB diagnostics receiver, but that new APK has not been installed under the instruction to preserve the existing session. The RT-01–RT-10 matrix cannot be completed or marked PASS honestly until an in-place update is explicitly authorized.
+Historical baseline status: `BLOCKED` for the prior real-device diagnostics rule. The
+current source status is recorded above; device verification remains user-owned.
 
 ## Baseline and scope
 

@@ -1,0 +1,6 @@
+name: openai
+description: "Sử dụng cho Codex khi muốn Antigravity thực hiện vai trò primary executor."
+capabilities:
+  - execute-tasks
+  - read-code
+  - local-android-distribution

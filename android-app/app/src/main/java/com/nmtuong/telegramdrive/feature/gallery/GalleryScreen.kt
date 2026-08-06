@@ -1,17 +1,16 @@
 package com.nmtuong.telegramdrive.feature.gallery
 
 import android.content.res.Configuration
-import android.graphics.BitmapFactory
-import android.util.Base64
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,14 +21,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -37,6 +43,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -48,9 +55,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -58,15 +67,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.LoadState
+import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
+import com.nmtuong.telegramdrive.R
 import com.nmtuong.telegramdrive.data.GalleryMediaFilter
 import com.nmtuong.telegramdrive.data.GalleryQuery
 import com.nmtuong.telegramdrive.data.SavedMediaSyncResult
@@ -74,11 +86,8 @@ import com.nmtuong.telegramdrive.data.local.MediaSyncPhase
 import com.nmtuong.telegramdrive.data.local.SavedMediaEntity
 import com.nmtuong.telegramdrive.data.local.SyncStateEntity
 import com.nmtuong.telegramdrive.ui.theme.TelegramDriveTheme
-import java.io.File
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -98,22 +107,22 @@ fun GalleryScreen(
   val syncResult by viewModel.syncResult.collectAsStateWithLifecycle(initialValue = null)
   val thumbnailPaths by viewModel.thumbnailPaths.collectAsStateWithLifecycle()
   val openState by viewModel.openState.collectAsStateWithLifecycle()
+  val currentIdentity by viewModel.currentIdentity.collectAsStateWithLifecycle()
+  val thumbnailLoader = remember { GalleryThumbnailLoader() }
   var searchText by remember { mutableStateOf(query.search) }
   val syncPresentation = syncPresentation(syncState, syncResult)
   val hasActiveQuery = query.search.isNotBlank() || query.mediaFilter != GalleryMediaFilter.ALL || query.localOnly
 
-  LaunchedEffect(query.search) {
-    searchText = query.search
-  }
+  LaunchedEffect(thumbnailLoader, currentIdentity) { thumbnailLoader.clear() }
+  DisposableEffect(thumbnailLoader) { onDispose { thumbnailLoader.close() } }
+  LaunchedEffect(query.search) { searchText = query.search }
 
   LaunchedEffect(openState) {
     when (val state = openState) {
       is GalleryOpenState.Opened -> {
-        onOpenMedia(
-          state.entity,
-          state.path,
-          state.entity.thumbnailStableFileIdentity?.let(thumbnailPaths::get),
-        )
+        val thumbnailKey = state.entity.thumbnailStableFileIdentity
+          ?: state.entity.thumbnailFileId?.let { "tdlib-file:$it" }
+        onOpenMedia(state.entity, state.path, thumbnailKey?.let(thumbnailPaths::get))
         viewModel.consumeOpenState()
       }
       else -> Unit
@@ -156,49 +165,37 @@ fun GalleryScreen(
         onToggleSort = viewModel::toggleSort,
         onSync = viewModel::refreshSync,
       )
-      SyncStatusBanner(
-        presentation = syncPresentation,
-        onRetry = viewModel::refreshSync,
-      )
+      if (syncPresentation.showCompactStatus) {
+        SyncStatusCompact(syncPresentation, onRetry = viewModel::refreshSync)
+      }
       OpenStatus(openState, onRetry = viewModel::retryOpen)
 
       Box(Modifier.fillMaxWidth().weight(1f)) {
         val refreshState = items.loadState.refresh
         when {
-          refreshState is LoadState.Loading && items.itemCount == 0 -> {
-            InitialLoadingPanel()
-          }
-          refreshState is LoadState.Error && items.itemCount == 0 -> {
-            GalleryErrorPanel(onRetry = items::retry)
-          }
-          items.itemCount == 0 -> {
-            EmptyPanel(
-              syncState = syncState,
-              hasActiveQuery = hasActiveQuery,
-              onRetry = viewModel::refreshSync,
-              onClearQuery = {
-                searchText = ""
-                viewModel.setSearch("")
-                viewModel.setMediaFilter(GalleryMediaFilter.ALL)
-                viewModel.setLocalOnly(false)
-              },
-            )
-          }
-          else -> {
-            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-              if (refreshState is LoadState.Error) {
-                InlineError(message = "Saved media could not be refreshed", onRetry = items::retry)
-              }
-              GalleryGrid(
-                items = items,
-                thumbnailPaths = thumbnailPaths,
-                state = gridState,
-                onLoadThumbnail = viewModel::loadThumbnail,
-                onOpenMedia = viewModel::openMedia,
-                modifier = Modifier.weight(1f),
-              )
-            }
-          }
+          refreshState is LoadState.Loading && items.itemCount == 0 -> InitialLoadingPanel()
+          refreshState is LoadState.Error && items.itemCount == 0 -> GalleryErrorPanel(onRetry = items::retry)
+          items.itemCount == 0 -> EmptyPanel(
+            syncState = syncState,
+            canRetrySync = syncPresentation.showRetry,
+            hasActiveQuery = hasActiveQuery,
+            onRetry = viewModel::refreshSync,
+            onClearQuery = {
+              searchText = ""
+              viewModel.setSearch("")
+              viewModel.setMediaFilter(GalleryMediaFilter.ALL)
+              viewModel.setLocalOnly(false)
+            },
+          )
+          else -> GalleryGrid(
+            items = items,
+            thumbnailPaths = thumbnailPaths,
+            state = gridState,
+            thumbnailLoader = thumbnailLoader,
+            onLoadThumbnail = viewModel::loadThumbnail,
+            onOpenMedia = viewModel::openMedia,
+            modifier = Modifier.fillMaxSize(),
+          )
         }
       }
     }
@@ -208,56 +205,42 @@ fun GalleryScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun GalleryTopBar(onOpenSourceBrowser: () -> Unit) {
+  val openSourcesDescription = stringResource(R.string.gallery_open_sources)
   TopAppBar(
-    title = { Text("Saved Media", style = MaterialTheme.typography.titleLarge) },
+    title = { Text(stringResource(R.string.gallery_title), style = MaterialTheme.typography.titleLarge) },
     actions = {
       TextButton(
         onClick = onOpenSourceBrowser,
-        modifier = Modifier.semantics { contentDescription = "Open sources" },
+        modifier = Modifier.semantics { contentDescription = openSourcesDescription },
       ) {
-        Text("↗", style = MaterialTheme.typography.titleMedium)
+        Icon(Icons.Default.List, contentDescription = null)
         Spacer(Modifier.width(6.dp))
-        Text("Sources")
+        Text(stringResource(R.string.gallery_sources))
       }
     },
-    colors = TopAppBarDefaults.topAppBarColors(
-      containerColor = MaterialTheme.colorScheme.background,
-    ),
+    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
   )
 }
 
 @Composable
-private fun GallerySearchField(
-  searchText: String,
-  onSearchTextChanged: (String) -> Unit,
-) {
+private fun GallerySearchField(searchText: String, onSearchTextChanged: (String) -> Unit) {
+  val searchDescription = stringResource(R.string.gallery_search)
+  val clearSearchDescription = stringResource(R.string.gallery_clear_search)
   OutlinedTextField(
     value = searchText,
     onValueChange = onSearchTextChanged,
     modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
     singleLine = true,
-    placeholder = { Text("Search filename or caption") },
-    leadingIcon = {
-      Text(
-        text = "⌕",
-        style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier.semantics { contentDescription = "Search" },
-      )
-    },
+    placeholder = { Text(stringResource(R.string.gallery_search_hint)) },
+    leadingIcon = { Icon(Icons.Default.Search, contentDescription = searchDescription) },
     trailingIcon = if (searchText.isNotEmpty()) {
       {
         IconButton(
           onClick = { onSearchTextChanged("") },
-          modifier = Modifier
-            .size(48.dp)
-            .semantics { contentDescription = "Clear search" },
-        ) {
-          Text("×", style = MaterialTheme.typography.titleLarge)
-        }
+          modifier = Modifier.semantics { contentDescription = clearSearchDescription },
+        ) { Icon(Icons.Default.Clear, contentDescription = null) }
       }
-    } else {
-      null
-    },
+    } else null,
     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
   )
 }
@@ -273,44 +256,16 @@ private fun GalleryFilters(
     contentPadding = PaddingValues(horizontal = 2.dp),
     horizontalArrangement = Arrangement.spacedBy(8.dp),
   ) {
-    item {
-      GalleryFilterChip(
-        label = "All",
-        selected = query.mediaFilter == GalleryMediaFilter.ALL,
-        onClick = { onMediaFilterChanged(GalleryMediaFilter.ALL) },
-      )
-    }
-    item {
-      GalleryFilterChip(
-        label = "Images",
-        selected = query.mediaFilter == GalleryMediaFilter.IMAGE,
-        onClick = { onMediaFilterChanged(GalleryMediaFilter.IMAGE) },
-      )
-    }
-    item {
-      GalleryFilterChip(
-        label = "Videos",
-        selected = query.mediaFilter == GalleryMediaFilter.VIDEO,
-        onClick = { onMediaFilterChanged(GalleryMediaFilter.VIDEO) },
-      )
-    }
-    item {
-      GalleryFilterChip(
-        label = "Local",
-        selected = query.localOnly,
-        onClick = { onLocalOnlyChanged(!query.localOnly) },
-      )
-    }
+    item { GalleryFilterChip(stringResource(R.string.gallery_filter_all), query.mediaFilter == GalleryMediaFilter.ALL) { onMediaFilterChanged(GalleryMediaFilter.ALL) } }
+    item { GalleryFilterChip(stringResource(R.string.gallery_filter_images), query.mediaFilter == GalleryMediaFilter.IMAGE) { onMediaFilterChanged(GalleryMediaFilter.IMAGE) } }
+    item { GalleryFilterChip(stringResource(R.string.gallery_filter_videos), query.mediaFilter == GalleryMediaFilter.VIDEO) { onMediaFilterChanged(GalleryMediaFilter.VIDEO) } }
+    item { GalleryFilterChip(stringResource(R.string.gallery_filter_local), query.localOnly) { onLocalOnlyChanged(!query.localOnly) } }
   }
 }
 
 @Composable
 private fun GalleryFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
-  FilterChip(
-    selected = selected,
-    onClick = onClick,
-    label = { Text(label, maxLines = 1) },
-  )
+  FilterChip(selected = selected, onClick = onClick, label = { Text(label, maxLines = 1) })
 }
 
 @Composable
@@ -326,80 +281,80 @@ private fun GalleryControls(
     verticalAlignment = Alignment.CenterVertically,
   ) {
     TextButton(onClick = onToggleSort) {
-      Text("↕", style = MaterialTheme.typography.titleMedium)
+      Icon(Icons.Default.List, contentDescription = null)
       Spacer(Modifier.width(6.dp))
-      Text(if (query.newestFirst) "Newest first" else "Oldest first")
+      Text(stringResource(if (query.newestFirst) R.string.gallery_sort_newest else R.string.gallery_sort_oldest))
     }
     FilledTonalButton(
       onClick = onSync,
-      enabled = !syncPresentation.isActive,
+      enabled = syncPresentation.syncEnabled && !syncPresentation.isActive,
     ) {
-      Text(if (syncPresentation.isActive) "Syncing…" else "⟳  Sync")
+      Icon(Icons.Default.Refresh, contentDescription = null)
+      Spacer(Modifier.width(6.dp))
+      Text(stringResource(if (syncPresentation.isActive) R.string.gallery_syncing else R.string.gallery_sync))
     }
   }
 }
 
-private data class SyncPresentation(
-  val label: String,
-  val isActive: Boolean,
-  val showRetry: Boolean,
-)
+internal enum class SyncPresentationState { IDLE, ACTIVE, RETRYABLE_ERROR, UNAVAILABLE }
 
-private fun syncPresentation(
-  state: SyncStateEntity?,
-  result: SavedMediaSyncResult?,
-): SyncPresentation {
+internal data class SyncPresentation(
+  val state: SyncPresentationState,
+  val showRetry: Boolean,
+  val syncEnabled: Boolean,
+) {
+  val isActive: Boolean get() = state == SyncPresentationState.ACTIVE
+  val showCompactStatus: Boolean get() = state != SyncPresentationState.IDLE
+}
+
+internal fun syncPresentation(state: SyncStateEntity?, result: SavedMediaSyncResult?): SyncPresentation {
   val active = state?.phase in setOf(
     MediaSyncPhase.DISCOVERING_HEAD.name,
     MediaSyncPhase.BACKFILLING.name,
     MediaSyncPhase.CATCHING_UP.name,
   )
   return when {
-    active -> SyncPresentation("Syncing saved media…", isActive = true, showRetry = false)
-    state?.phase == MediaSyncPhase.ERROR.name || result is SavedMediaSyncResult.Failed ->
-      SyncPresentation("Sync couldn't complete", isActive = false, showRetry = true)
-    state?.phase == MediaSyncPhase.COMPLETED.name || result is SavedMediaSyncResult.Completed ->
-      SyncPresentation("Up to date", isActive = false, showRetry = false)
-    state?.phase == MediaSyncPhase.IDLE.name ->
-      SyncPresentation("Ready to sync", isActive = false, showRetry = false)
-    else -> SyncPresentation("Preparing your gallery…", isActive = false, showRetry = false)
+    active -> SyncPresentation(SyncPresentationState.ACTIVE, showRetry = false, syncEnabled = false)
+    result is SavedMediaSyncResult.Failed && result.retryable -> SyncPresentation(SyncPresentationState.RETRYABLE_ERROR, true, true)
+    result is SavedMediaSyncResult.Failed -> SyncPresentation(SyncPresentationState.UNAVAILABLE, false, false)
+    state?.phase == MediaSyncPhase.ERROR.name -> SyncPresentation(SyncPresentationState.RETRYABLE_ERROR, true, true)
+    else -> SyncPresentation(SyncPresentationState.IDLE, false, true)
   }
 }
 
 @Composable
-private fun SyncStatusBanner(presentation: SyncPresentation, onRetry: () -> Unit) {
-  Surface(
-    modifier = Modifier.fillMaxWidth(),
-    shape = RoundedCornerShape(12.dp),
-    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+private fun SyncStatusCompact(presentation: SyncPresentation, onRetry: () -> Unit) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+      .padding(horizontal = 10.dp, vertical = 6.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(8.dp),
   ) {
-    Column {
-      Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        if (presentation.isActive) {
-          CircularProgressIndicator(Modifier.size(18.dp))
-        }
-        Text(
-          text = presentation.label,
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.weight(1f),
-        )
-        if (presentation.showRetry) {
-          TextButton(onClick = onRetry) { Text("Try again") }
-        }
-      }
-      if (presentation.isActive) {
-        LinearProgressIndicator(
-          modifier = Modifier.fillMaxWidth().height(2.dp),
-          color = MaterialTheme.colorScheme.primary,
-          trackColor = MaterialTheme.colorScheme.surfaceVariant,
-        )
-      }
+    if (presentation.isActive) {
+      CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+    } else if (presentation.state == SyncPresentationState.UNAVAILABLE) {
+      Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
     }
+    Text(
+      text = stringResource(
+        when (presentation.state) {
+          SyncPresentationState.ACTIVE -> R.string.gallery_sync_status_active
+          SyncPresentationState.RETRYABLE_ERROR -> R.string.gallery_sync_status_retryable
+          SyncPresentationState.UNAVAILABLE -> R.string.gallery_sync_status_unavailable
+          SyncPresentationState.IDLE -> R.string.gallery_sync_status_idle
+        },
+      ),
+      style = MaterialTheme.typography.bodySmall,
+      modifier = Modifier.weight(1f),
+    )
+    if (presentation.showRetry) {
+      TextButton(onClick = onRetry) { Text(stringResource(R.string.gallery_retry)) }
+    }
+  }
+  if (presentation.isActive) {
+    LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
   }
 }
 
@@ -409,94 +364,94 @@ private fun OpenStatus(openState: GalleryOpenState, onRetry: () -> Unit) {
     GalleryOpenState.Idle,
     is GalleryOpenState.Opened,
     -> Unit
-    GalleryOpenState.Loading -> InlineLoading(message = "Preparing media…")
-    is GalleryOpenState.Failed -> InlineError(message = "Couldn't open this media", onRetry = onRetry)
+    GalleryOpenState.Loading -> InlineLoading(stringResource(R.string.gallery_opening))
+    GalleryOpenState.Unavailable -> InlineError(stringResource(R.string.gallery_unavailable), onRetry = {}, showRetry = false)
+    is GalleryOpenState.Failed -> InlineError(stringResource(R.string.gallery_open_error), onRetry = onRetry)
   }
 }
 
 @Composable
 private fun GalleryGrid(
-  items: androidx.paging.compose.LazyPagingItems<SavedMediaEntity>,
+  items: LazyPagingItems<GalleryItemUiModel>,
   thumbnailPaths: Map<String, String>,
   state: LazyGridState,
+  thumbnailLoader: GalleryThumbnailLoader,
   onLoadThumbnail: (SavedMediaEntity) -> Unit,
   onOpenMedia: (SavedMediaEntity) -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  LazyVerticalGrid(
-    columns = GridCells.Adaptive(minSize = 156.dp),
-    state = state,
-    modifier = modifier
-      .fillMaxWidth()
-      .semantics { contentDescription = "Saved media grid" },
-    contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
-    horizontalArrangement = Arrangement.spacedBy(10.dp),
-    verticalArrangement = Arrangement.spacedBy(10.dp),
-  ) {
-    items(
-      count = items.itemCount,
-      key = { index ->
-        items.peek(index)?.let { "${it.chatId}:${it.messageId}" } ?: "placeholder:$index"
-      },
-    ) { index ->
-      items[index]?.let { entity ->
-        LaunchedEffect(entity.thumbnailStableFileIdentity) { onLoadThumbnail(entity) }
-        Column(
-          modifier = Modifier.fillMaxWidth(),
-          verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-          if (index == 0 || monthKey(entity) != monthKey(items.peek(index - 1))) {
-            MonthHeader(monthKey(entity))
+  val density = LocalDensity.current
+  val targetSizePx = (220.dp.value * density.density).roundToInt()
+  val gridDescription = stringResource(R.string.gallery_grid_description)
+  BoxWithConstraints(modifier = modifier) {
+    LazyVerticalGrid(
+      columns = GridCells.Fixed(galleryColumnCount(maxWidth.value.roundToInt())),
+      state = state,
+      modifier = Modifier
+        .fillMaxSize()
+        .semantics { contentDescription = gridDescription },
+      contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      items(
+        count = items.itemCount,
+        key = { index -> items.peek(index)?.stableKey ?: "placeholder:$index" },
+      ) { index ->
+        val item = items[index]
+        if (item != null) {
+          LaunchedEffect(item.thumbnailStableIdentity, item.source.accountId, item.source.databaseGeneration) {
+            onLoadThumbnail(item.source)
           }
           GalleryTile(
-            entity = entity,
-            thumbnailPath = entity.thumbnailStableFileIdentity?.let(thumbnailPaths::get),
-            onClick = { onOpenMedia(entity) },
+            item = item.copy(thumbnailPath = item.thumbnailStableIdentity?.let(thumbnailPaths::get)),
+            thumbnailLoader = thumbnailLoader,
+            targetSizePx = targetSizePx,
+            onClick = { onOpenMedia(item.source) },
           )
         }
       }
-    }
-    if (items.loadState.append is LoadState.Loading) {
-      item(span = { GridItemSpan(maxLineSpan) }) {
-        Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
-          CircularProgressIndicator(Modifier.size(24.dp))
+      if (items.loadState.append is LoadState.Loading) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+          Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(Modifier.size(24.dp))
+          }
+        }
+      }
+      if (items.loadState.append is LoadState.Error) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+          InlineError(stringResource(R.string.gallery_more_error), onRetry = items::retry)
         }
       }
     }
-    if (items.loadState.append is LoadState.Error) {
-      item(span = { GridItemSpan(maxLineSpan) }) {
-        InlineError(message = "More media couldn't be loaded", onRetry = items::retry)
-      }
-    }
   }
 }
 
 @Composable
-private fun MonthHeader(month: String) {
-  Text(
-    text = month,
-    style = MaterialTheme.typography.titleSmall,
-    color = MaterialTheme.colorScheme.onSurfaceVariant,
-    modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
-  )
-}
-
-@Composable
-private fun GalleryTile(entity: SavedMediaEntity, thumbnailPath: String?, onClick: () -> Unit) {
-  val local = entity.localFilePath?.let(::File)?.takeIf { it.isFile }
-  val isVideo = entity.mediaType == "VIDEO"
-  val duration = entity.durationSeconds.takeIf { isVideo && it > 0 }?.let(::formatDuration)
-  val displayName = entity.stableDisplayName.ifBlank { "Untitled media" }
+internal fun GalleryTile(
+  item: GalleryItemUiModel,
+  thumbnailLoader: GalleryThumbnailLoader,
+  targetSizePx: Int,
+  onClick: () -> Unit,
+) {
+  val displayName = if (item.usesFallbackName) {
+    stringResource(if (item.mediaType == GalleryItemMediaType.VIDEO) R.string.gallery_untitled_video else R.string.gallery_untitled_image)
+  } else item.displayName
+  val typeLabel = stringResource(if (item.mediaType == GalleryItemMediaType.VIDEO) R.string.gallery_media_type_video else R.string.gallery_media_type_image)
+  val availabilityLabel = stringResource(availabilityString(item.availability))
+  val dateLabel = item.dateText ?: stringResource(R.string.gallery_unknown_date)
   val accessibilityDescription = buildString {
-    append(if (isVideo) "Video" else "Image")
-    append(": ")
-    append(displayName)
-    duration?.let { append(", $it") }
-    if (local != null) append(", Local copy")
+    append(typeLabel).append(": ").append(displayName)
+    item.durationText?.let { append(", ").append(it) }
+    item.fileSizeText?.let { append(", ").append(it) }
+    item.resolutionText?.let { append(", ").append(it) }
+    append(", ").append(dateLabel).append(", ").append(availabilityLabel)
   }
+  val enabled = item.availability != GalleryFileAvailability.UNAVAILABLE
 
   Card(
     onClick = onClick,
+    enabled = enabled,
     modifier = Modifier
       .fillMaxWidth()
       .semantics(mergeDescendants = true) { contentDescription = accessibilityDescription },
@@ -509,44 +464,66 @@ private fun GalleryTile(entity: SavedMediaEntity, thumbnailPath: String?, onClic
       modifier = Modifier.fillMaxWidth().padding(8.dp),
       verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-      MediaThumbnail(entity, thumbnailPath, duration)
-      Text(
-        text = displayName,
-        style = MaterialTheme.typography.bodyMedium,
-        maxLines = 2,
-        overflow = TextOverflow.Ellipsis,
-        color = MaterialTheme.colorScheme.onSurface,
-      )
-      if (local != null) {
-        Surface(
-          shape = RoundedCornerShape(6.dp),
-          color = MaterialTheme.colorScheme.primaryContainer,
-          contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        ) {
-          Text(
-            text = "Local",
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-          )
-        }
-      }
+      GalleryMediaThumbnail(item, thumbnailLoader, targetSizePx)
+      Text(text = displayName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+      item.metadataText?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+      Text(dateLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      GalleryAvailabilityChip(item.availability)
     }
   }
 }
 
 @Composable
-private fun MediaThumbnail(entity: SavedMediaEntity, thumbnailPath: String?, duration: String?) {
-  val bitmap = remember(entity.minithumbnailData, thumbnailPath) {
-    thumbnailPath?.let { BitmapFactory.decodeFile(it) } ?: entity.minithumbnailData?.let { encoded ->
-      runCatching {
-        val bytes = Base64.decode(encoded, Base64.DEFAULT)
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-      }.getOrNull()
-    }
+private fun GalleryAvailabilityChip(availability: GalleryFileAvailability) {
+  val containerColor = when (availability) {
+    GalleryFileAvailability.LOCAL_COMPLETE -> MaterialTheme.colorScheme.primaryContainer
+    GalleryFileAvailability.REMOTE_STREAMABLE -> MaterialTheme.colorScheme.secondaryContainer
+    GalleryFileAvailability.PARTIAL -> MaterialTheme.colorScheme.tertiaryContainer
+    GalleryFileAvailability.DOWNLOADING -> MaterialTheme.colorScheme.surfaceVariant
+    GalleryFileAvailability.UNAVAILABLE -> MaterialTheme.colorScheme.errorContainer
   }
-  val isVideo = entity.mediaType == "VIDEO"
-  val shape = RoundedCornerShape(10.dp)
+  val contentColor = when (availability) {
+    GalleryFileAvailability.UNAVAILABLE -> MaterialTheme.colorScheme.onErrorContainer
+    GalleryFileAvailability.LOCAL_COMPLETE -> MaterialTheme.colorScheme.onPrimaryContainer
+    GalleryFileAvailability.REMOTE_STREAMABLE -> MaterialTheme.colorScheme.onSecondaryContainer
+    GalleryFileAvailability.PARTIAL -> MaterialTheme.colorScheme.onTertiaryContainer
+    GalleryFileAvailability.DOWNLOADING -> MaterialTheme.colorScheme.onSurfaceVariant
+  }
+  Surface(
+    shape = RoundedCornerShape(6.dp),
+    color = containerColor,
+    contentColor = contentColor,
+  ) {
+    Text(
+      text = stringResource(availabilityString(availability)),
+      style = MaterialTheme.typography.labelSmall,
+      modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+    )
+  }
+}
 
+private fun availabilityString(availability: GalleryFileAvailability): Int = when (availability) {
+  GalleryFileAvailability.LOCAL_COMPLETE -> R.string.gallery_availability_local
+  GalleryFileAvailability.REMOTE_STREAMABLE -> R.string.gallery_availability_remote
+  GalleryFileAvailability.PARTIAL -> R.string.gallery_availability_partial
+  GalleryFileAvailability.DOWNLOADING -> R.string.gallery_availability_downloading
+  GalleryFileAvailability.UNAVAILABLE -> R.string.gallery_availability_unavailable
+}
+
+@Composable
+private fun GalleryMediaThumbnail(item: GalleryItemUiModel, loader: GalleryThumbnailLoader, targetSizePx: Int) {
+  val source = remember(item.stableKey, item.thumbnailStableIdentity, item.thumbnailPath, item.minithumbnailData) {
+    GalleryThumbnailSource(
+      accountIdentity = com.nmtuong.telegramdrive.domain.AccountSessionIdentity(item.source.accountId, item.source.databaseGeneration),
+      stableIdentity = item.thumbnailStableIdentity ?: item.stableKey,
+      filePath = item.thumbnailPath,
+      minithumbnailData = item.minithumbnailData,
+    )
+  }
+  val bitmap by produceState<android.graphics.Bitmap?>(null, source, targetSizePx) {
+    value = loader.load(source, targetSizePx, targetSizePx)
+  }
+  val shape = RoundedCornerShape(10.dp)
   Box(
     modifier = Modifier
       .fillMaxWidth()
@@ -555,42 +532,35 @@ private fun MediaThumbnail(entity: SavedMediaEntity, thumbnailPath: String?, dur
       .background(MaterialTheme.colorScheme.surface),
     contentAlignment = Alignment.Center,
   ) {
-    when {
-      bitmap != null -> Image(
-        bitmap = bitmap.asImageBitmap(),
+    if (bitmap != null) {
+      Image(
+        bitmap = bitmap!!.asImageBitmap(),
         contentDescription = null,
         modifier = Modifier.fillMaxSize(),
         contentScale = ContentScale.Crop,
       )
-      isVideo -> Text("Video", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-      else -> Text("Image", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    } else {
+      Text(
+        text = stringResource(if (item.mediaType == GalleryItemMediaType.VIDEO) R.string.gallery_media_type_video else R.string.gallery_media_type_image),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
     }
-
-    if (isVideo) {
+    if (item.mediaType == GalleryItemMediaType.VIDEO) {
       Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f)))
       Surface(
         modifier = Modifier.size(44.dp),
         shape = CircleShape,
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
         contentColor = MaterialTheme.colorScheme.onSurface,
-      ) {
-        Box(contentAlignment = Alignment.Center) {
-          Text("▶", style = MaterialTheme.typography.titleMedium)
-        }
-      }
-      duration?.let {
+      ) { Icon(Icons.Default.PlayArrow, contentDescription = null) }
+      item.durationText?.let {
         Surface(
           modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
           shape = RoundedCornerShape(6.dp),
           color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.78f),
           contentColor = MaterialTheme.colorScheme.onSurface,
-        ) {
-          Text(
-            text = it,
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-          )
-        }
+        ) { Text(it, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) }
       }
     }
   }
@@ -598,20 +568,17 @@ private fun MediaThumbnail(entity: SavedMediaEntity, thumbnailPath: String?, dur
 
 @Composable
 private fun InitialLoadingPanel() {
-  Column(
-    modifier = Modifier.fillMaxSize(),
-    horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.Center,
-  ) {
+  Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
     CircularProgressIndicator()
     Spacer(Modifier.height(12.dp))
-    Text("Loading saved media…", style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.gallery_loading), style = MaterialTheme.typography.bodyMedium)
   }
 }
 
 @Composable
 private fun EmptyPanel(
   syncState: SyncStateEntity?,
+  canRetrySync: Boolean,
   hasActiveQuery: Boolean,
   onRetry: () -> Unit,
   onClearQuery: () -> Unit,
@@ -623,34 +590,30 @@ private fun EmptyPanel(
     MediaSyncPhase.CATCHING_UP.name,
   )
   val title = when {
-    syncError -> "Sync couldn't complete"
-    isSyncing -> "Syncing saved media…"
-    hasActiveQuery -> "No matching media"
-    else -> "No saved media yet"
+    isSyncing -> R.string.gallery_empty_syncing_title
+    hasActiveQuery -> R.string.gallery_no_results_title
+    syncError -> R.string.gallery_empty_sync_error_title
+    else -> R.string.gallery_empty_title
   }
   val message = when {
-    syncError -> "Try again to refresh your saved media."
-    isSyncing -> "Your media will appear here as it is indexed."
-    hasActiveQuery -> "Try another search or filter."
-    else -> "Media saved in Telegram will appear here."
+    isSyncing -> R.string.gallery_empty_syncing_message
+    hasActiveQuery -> R.string.gallery_no_results_message
+    syncError -> R.string.gallery_empty_sync_error_message
+    else -> R.string.gallery_empty_message
   }
-
   Column(
     modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.Center,
   ) {
-    Text(title, style = MaterialTheme.typography.titleMedium)
+    Text(stringResource(title), style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(8.dp))
-    Text(
-      text = message,
-      style = MaterialTheme.typography.bodyMedium,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    Text(stringResource(message), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(16.dp))
     when {
-      syncError || !hasActiveQuery -> Button(onClick = onRetry) { Text("Try again") }
-      else -> TextButton(onClick = onClearQuery) { Text("Clear search & filters") }
+      hasActiveQuery -> TextButton(onClick = onClearQuery) { Text(stringResource(R.string.gallery_clear_filters)) }
+      canRetrySync -> Button(onClick = onRetry) { Text(stringResource(R.string.gallery_retry)) }
+      else -> Unit
     }
   }
 }
@@ -662,68 +625,29 @@ private fun GalleryErrorPanel(onRetry: () -> Unit) {
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.Center,
   ) {
-    Text("Couldn't load saved media", style = MaterialTheme.typography.titleMedium)
+    Text(stringResource(R.string.gallery_load_error_title), style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(8.dp))
-    Text(
-      "Check your connection and try again.",
-      style = MaterialTheme.typography.bodyMedium,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    Text(stringResource(R.string.gallery_load_error_message), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(16.dp))
-    Button(onClick = onRetry) { Text("Try again") }
+    Button(onClick = onRetry) { Text(stringResource(R.string.gallery_retry)) }
   }
 }
 
 @Composable
 private fun InlineLoading(message: String) {
-  Row(
-    modifier = Modifier.fillMaxWidth(),
-    verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(8.dp),
-  ) {
+  Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
     CircularProgressIndicator(Modifier.size(18.dp))
     Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
   }
 }
 
 @Composable
-private fun InlineError(message: String, onRetry: () -> Unit) {
-  Row(
-    modifier = Modifier.fillMaxWidth(),
-    verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(8.dp),
-  ) {
-    Text(
-      text = message,
-      style = MaterialTheme.typography.bodySmall,
-      color = MaterialTheme.colorScheme.error,
-      modifier = Modifier.weight(1f),
-    )
-    TextButton(onClick = onRetry) { Text("Retry") }
+private fun InlineError(message: String, onRetry: () -> Unit, showRetry: Boolean = true) {
+  Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+    if (showRetry) TextButton(onClick = onRetry) { Text(stringResource(R.string.gallery_retry)) }
   }
 }
-
-private fun formatDuration(seconds: Int): String {
-  val minutes = seconds / 60
-  val remainingSeconds = seconds % 60
-  return when {
-    minutes >= 60 -> "${minutes / 60}h ${minutes % 60}m"
-    minutes > 0 -> "%d:%02d".format(Locale.US, minutes, remainingSeconds)
-    else -> "${remainingSeconds}s"
-  }
-}
-
-private val monthFormatter = DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault())
-
-private fun monthKey(entity: SavedMediaEntity?): String = entity?.let {
-  if (it.messageDateEpochSeconds <= 0L) {
-    "Unknown date"
-  } else {
-    Instant.ofEpochSecond(it.messageDateEpochSeconds)
-      .atZone(ZoneId.systemDefault())
-      .format(monthFormatter)
-  }
-} ?: "Unknown date"
 
 private enum class GalleryPreviewState { CONTENT, SYNCING, LOADING, EMPTY, NO_RESULTS, ERROR }
 
@@ -733,9 +657,12 @@ private fun GalleryPreviewFrame(
   query: GalleryQuery = GalleryQuery(),
   searchText: String = query.search,
   syncState: SyncStateEntity? = null,
+  syncResult: SavedMediaSyncResult? = null,
   items: List<SavedMediaEntity> = previewItems(),
 ) {
-  val presentation = syncPresentation(syncState, null)
+  val presentation = syncPresentation(syncState, syncResult)
+  val thumbnailLoader = remember { GalleryThumbnailLoader() }
+  DisposableEffect(thumbnailLoader) { onDispose { thumbnailLoader.close() } }
   Scaffold(
     modifier = Modifier.fillMaxSize(),
     containerColor = MaterialTheme.colorScheme.background,
@@ -752,15 +679,15 @@ private fun GalleryPreviewFrame(
       GallerySearchField(searchText, onSearchTextChanged = {})
       GalleryFilters(query, onMediaFilterChanged = {}, onLocalOnlyChanged = {})
       GalleryControls(query, presentation, onToggleSort = {}, onSync = {})
-      SyncStatusBanner(presentation, onRetry = {})
+      if (presentation.showCompactStatus) SyncStatusCompact(presentation, onRetry = {})
       Box(Modifier.fillMaxWidth().weight(1f)) {
         when (state) {
           GalleryPreviewState.CONTENT,
           GalleryPreviewState.SYNCING,
-          -> PreviewGalleryGrid(items)
+          -> PreviewGalleryGrid(items, thumbnailLoader)
           GalleryPreviewState.LOADING -> InitialLoadingPanel()
-          GalleryPreviewState.EMPTY -> EmptyPanel(null, false, {}, {})
-          GalleryPreviewState.NO_RESULTS -> EmptyPanel(null, true, {}, {})
+          GalleryPreviewState.EMPTY -> EmptyPanel(null, presentation.showRetry, false, {}, {})
+          GalleryPreviewState.NO_RESULTS -> EmptyPanel(null, presentation.showRetry, true, {}, {})
           GalleryPreviewState.ERROR -> GalleryErrorPanel {}
         }
       }
@@ -769,22 +696,22 @@ private fun GalleryPreviewFrame(
 }
 
 @Composable
-private fun PreviewGalleryGrid(items: List<SavedMediaEntity>) {
-  val previewItems = remember(items) { items }
-  LazyVerticalGrid(
-    columns = GridCells.Adaptive(minSize = 156.dp),
-    modifier = Modifier.fillMaxSize(),
-    contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
-    horizontalArrangement = Arrangement.spacedBy(10.dp),
-    verticalArrangement = Arrangement.spacedBy(10.dp),
-  ) {
-    items(previewItems, key = { "preview:${it.messageId}" }) { entity ->
-      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        val index = previewItems.indexOf(entity)
-        if (index == 0 || monthKey(entity) != monthKey(previewItems[index - 1])) {
-          MonthHeader(monthKey(entity))
-        }
-        GalleryTile(entity, thumbnailPath = null, onClick = {})
+private fun PreviewGalleryGrid(items: List<SavedMediaEntity>, thumbnailLoader: GalleryThumbnailLoader) {
+  val previewItems = remember(items) {
+    items.map { galleryItemUiModel(it, com.nmtuong.telegramdrive.domain.AccountSessionIdentity(1L, 1L), Locale.getDefault()) }
+  }
+  val density = LocalDensity.current
+  val targetSizePx = (220.dp.value * density.density).roundToInt()
+  BoxWithConstraints(Modifier.fillMaxSize()) {
+    LazyVerticalGrid(
+      columns = GridCells.Fixed(galleryColumnCount(maxWidth.value.roundToInt())),
+      modifier = Modifier.fillMaxSize(),
+      contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      items(previewItems, key = { it.stableKey }) { item ->
+        GalleryTile(item, thumbnailLoader, targetSizePx, onClick = {})
       }
     }
   }
@@ -797,13 +724,7 @@ private fun previewItems(): List<SavedMediaEntity> = listOf(
   previewEntity(4, "team-update.mp4", "VIDEO", 0, 1_722_000_000L),
 )
 
-private fun previewEntity(
-  messageId: Long,
-  displayName: String,
-  mediaType: String,
-  durationSeconds: Int,
-  dateEpochSeconds: Long,
-) = SavedMediaEntity(
+private fun previewEntity(messageId: Long, displayName: String, mediaType: String, durationSeconds: Int, dateEpochSeconds: Long) = SavedMediaEntity(
   accountId = 1L,
   databaseGeneration = 1L,
   chatId = 1L,
@@ -853,18 +774,31 @@ private fun GalleryEmptyPreview() {
 @Preview(name = "No matching media", showBackground = true, widthDp = 390, heightDp = 844, uiMode = Configuration.UI_MODE_NIGHT_YES)
 @Composable
 private fun GalleryNoResultsPreview() {
+  TelegramDriveTheme { GalleryPreviewFrame(GalleryPreviewState.NO_RESULTS, query = GalleryQuery(search = "receipt", mediaFilter = GalleryMediaFilter.VIDEO)) }
+}
+
+@Preview(name = "Gallery error", showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+private fun GalleryErrorPreview() {
+  TelegramDriveTheme { GalleryPreviewFrame(GalleryPreviewState.ERROR) }
+}
+
+@Preview(name = "Unicode filename", showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+private fun GalleryUnicodeFilenamePreview() {
   TelegramDriveTheme {
     GalleryPreviewFrame(
-      state = GalleryPreviewState.NO_RESULTS,
-      query = GalleryQuery(search = "receipt", mediaFilter = GalleryMediaFilter.VIDEO),
+      state = GalleryPreviewState.CONTENT,
+      syncState = previewCompletedSyncState(),
+      items = listOf(previewEntity(20, "旅行写真_مرحبا_очень-длинное-название.jpg", "IMAGE", 0, 1_725_000_000L)),
     )
   }
 }
 
-@Preview(name = "Gallery error", showBackground = true, widthDp = 390, heightDp = 844, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Preview(name = "Large text landscape", showBackground = true, widthDp = 844, heightDp = 390, fontScale = 1.3f)
 @Composable
-private fun GalleryErrorPreview() {
-  TelegramDriveTheme { GalleryPreviewFrame(GalleryPreviewState.ERROR) }
+private fun GalleryLargeTextLandscapePreview() {
+  TelegramDriveTheme { GalleryPreviewFrame(GalleryPreviewState.CONTENT, syncState = previewCompletedSyncState()) }
 }
 
 @Preview(name = "Long filename", showBackground = true, widthDp = 320, heightDp = 844, uiMode = Configuration.UI_MODE_NIGHT_YES)
@@ -875,13 +809,7 @@ private fun GalleryLongFilenamePreview() {
       state = GalleryPreviewState.CONTENT,
       syncState = previewCompletedSyncState(),
       items = listOf(
-        previewEntity(
-          messageId = 10,
-          displayName = "2026-07-21_family-trip_camera-export_final-final-2.jpg",
-          mediaType = "IMAGE",
-          durationSeconds = 0,
-          dateEpochSeconds = 1_725_000_000L,
-        ),
+        previewEntity(10, "2026-07-21_family-trip_camera-export_final-final-2.jpg", "IMAGE", 0, 1_725_000_000L),
         previewEntity(11, "unknown-duration-video.mp4", "VIDEO", 0, 1_725_000_000L),
       ),
     )
@@ -902,7 +830,4 @@ private fun previewSyncingState() = SyncStateEntity(
   lastAttemptAtEpochMillis = null,
 )
 
-private fun previewCompletedSyncState() = previewSyncingState().copy(
-  phase = MediaSyncPhase.COMPLETED.name,
-  lastSuccessfulCatchUpHead = 20L,
-)
+private fun previewCompletedSyncState() = previewSyncingState().copy(phase = MediaSyncPhase.COMPLETED.name, lastSuccessfulCatchUpHead = 20L)

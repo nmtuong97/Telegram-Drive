@@ -134,6 +134,30 @@ Trước khi kết thúc bất kỳ future goal nào:
 4. Dùng `git diff` để review workflow mutation trước khi persist.
 5. Khai báo rõ trong final report workflow đã tự cập nhật như thế nào.
 
+## 7. Codex-orchestrated mode
+
+Ngoài direct mode (`Người dùng → Antigravity /goal`), dự án hỗ trợ Codex-orchestrated mode (`Người dùng → Codex → Antigravity`). Mode này được nhận biết qua `Task Contract` có các trường:
+- `Agent-Session: <session-id>`
+- `Execution-Mode: codex-orchestrated`
+- `Execution-Role: primary-executor`
+- `Review-Owner: Codex`
+
+Trong mode này:
+- Codex là người sở hữu Task Contract và quyết định kết quả cuối cùng.
+- Antigravity chỉ là primary executor. Không tự ý báo hoàn thành khi chưa có sự chấp thuận (accept) của Codex.
+- Không chạy Firebase distribution (`distribute-local.sh`) trong quá trình triển khai. Codex sẽ kích hoạt handoff.
+- Mọi review finding phải được sửa bằng commit mới.
+- Kết thúc phải có working tree sạch và commit history hợp lệ (không rebase/amend commit cũ).
+
+### 7.1 Codex Review Protocol
+
+Khi Codex thực hiện review, cần tuân thủ các bước sau:
+1. **Provenance:** `git log --reverse --format=fuller BASE..RESULT`
+2. **Per-commit review:** `git show <commit>`
+3. **Aggregate review:** `git diff --check BASE..RESULT`, `git diff --stat BASE..RESULT`, `git diff BASE..RESULT`
+4. **Repository-specific review:** Chạy GitNexus `detect_changes`, đối chiếu blast radius, kiểm tra scope, test evidence, working-tree state, external side effects.
+5. **Acceptance matrix:** Mỗi tiêu chí phải có trạng thái rõ ràng (`PASS`, `FAIL`, `UNVERIFIED`, `NOT_APPLICABLE`, `BLOCKED`). Không coi "không thấy lỗi" là `PASS`.
+
 ---
 **Tài liệu này là Canonical Orchestration Workflow.**
 Mọi router từ `AGENTS.md` đều trỏ về đây. Đừng ghi đè tài liệu này bằng các kết luận tạm thời của một issue.

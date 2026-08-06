@@ -44,7 +44,11 @@ fun AppNavigation(container: AppContainer) {
     LibraryViewModel(container.telegramRepository, container.identityProvider)
   }
   val galleryViewModel: GalleryViewModel = viewModel {
-    GalleryViewModel(container.savedMediaRepository, container.mediaAccessCoordinator)
+    GalleryViewModel(
+      repository = container.savedMediaRepository,
+      mediaAccess = container.mediaAccessCoordinator,
+      identityProvider = container.identityProvider,
+    )
   }
   val authorization by authorizationViewModel.state.collectAsStateWithLifecycle()
   val currentIdentity by container.identityProvider.currentIdentity.collectAsStateWithLifecycle()

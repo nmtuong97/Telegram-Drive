@@ -218,6 +218,9 @@ write_release_notes() {
 
     {
         printf 'Task: %s\n' "${TASK_NAME}"
+        if [[ -n "${AGENT_SESSION_ID:-}" ]]; then
+            printf 'Agent Session: %s\n' "${AGENT_SESSION_ID}"
+        fi
         printf 'Branch: %s\n' "${branch}"
         printf 'Commit: %s\n' "${commit_hash}"
         printf 'Commit message: %s\n' "${commit_message}"
@@ -306,6 +309,20 @@ elif command -v npx >/dev/null 2>&1; then
         "Firebase CLI is unavailable. Install firebase-tools or run: firebase login"
 else
     die "Firebase CLI is unavailable. Install Firebase CLI or ensure npx is available."
+fi
+
+if [[ -n "${AGENT_SESSION_ID:-}" ]]; then
+    info "Verifying Agent Session: ${AGENT_SESSION_ID}"
+    reviewed_ref="refs/agent-sessions/${AGENT_SESSION_ID}/reviewed"
+    reviewed_sha="$(git -C "${REPO_ROOT}" rev-parse --verify "${reviewed_ref}" 2>/dev/null || true)"
+    [[ -n "${reviewed_sha}" ]] || die "Session ${AGENT_SESSION_ID} has not been reviewed/accepted (missing ${reviewed_ref})."
+    
+    current_head="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+    [[ "${current_head}" == "${reviewed_sha}" ]] || die "HEAD must be exactly at the reviewed commit (${reviewed_sha}) to perform handoff."
+    
+    [[ -z "$(git -C "${REPO_ROOT}" status --porcelain)" ]] || die "Working tree must be clean to perform handoff for an agent session."
+    
+    # We optionally check if branch is correct, but the wrapper already checked this in 'accept'
 fi
 
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/telegram-drive-distribution.XXXXXX")"

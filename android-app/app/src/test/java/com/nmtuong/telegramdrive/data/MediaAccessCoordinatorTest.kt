@@ -50,6 +50,20 @@ class MediaAccessCoordinatorTest {
     root.deleteRecursively()
   }
 
+  @Test
+  fun staleMissingAndUnreadableLocalCandidatesFallBackToStreaming() {
+    val root = Files.createTempDirectory("video-source-invalid-").toFile()
+    val missing = root.resolve("missing.video")
+    val directory = root.resolve("not-a-file").also { it.mkdirs() }
+
+    assertEquals(null, verifiedCompleteLocalVideoPath(missing.absolutePath, expectedSizeBytes = 8L))
+    assertEquals(null, verifiedCompleteLocalVideoPath(directory.absolutePath, expectedSizeBytes = 8L))
+    assertEquals(null, verifiedCompleteLocalVideoPath(missing.absolutePath, expectedSizeBytes = null))
+    assertEquals(null, verifiedCompleteLocalVideoPath(missing.absolutePath, expectedSizeBytes = 0L))
+
+    root.deleteRecursively()
+  }
+
   private fun thumbnail(identity: String, lastAccessedAt: Long) = CachedFileEntity(
     accountId = 1L,
     databaseGeneration = 1L,

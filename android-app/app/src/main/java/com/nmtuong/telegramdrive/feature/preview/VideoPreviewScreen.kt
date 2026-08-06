@@ -346,7 +346,11 @@ private fun BottomControls(
         Text("+10", color = Color.White, style = MaterialTheme.typography.labelLarge)
       }
       Text(
-        text = "${formatClock(displayedPositionMs)} / ${formatClock(state.durationMs)}",
+        text = if (state.durationMs > 0L) {
+          "${formatClock(displayedPositionMs)} / ${formatClock(state.durationMs)}"
+        } else {
+          stringResource(R.string.video_duration_unknown)
+        },
         color = Color.White,
         style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier.weight(1f),
