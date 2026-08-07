@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -61,6 +62,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.common.util.UnstableApi
@@ -85,11 +87,11 @@ fun VideoPreviewScreen(
 ) {
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
-  // This owner is remembered by one open route, not stored in the Activity's
-  // ViewModelStore under a stable file key.
-  val owner = viewModel ?: remember(request, playbackSessionId) {
-    VideoPlayerViewModel(request, mediaAccess)
-  }
+  // Use viewModel to survive configuration changes like orientation change.
+  val owner = viewModel ?: viewModel(
+    key = "video_player_${playbackSessionId}_${request.playbackKey}",
+    factory = VideoPlayerViewModel.Factory(request, mediaAccess)
+  )
   val player by owner.player.collectAsStateWithLifecycle()
   val state by owner.uiState.collectAsStateWithLifecycle()
 
@@ -118,6 +120,8 @@ fun VideoPreviewScreen(
       owner.setControlsVisible(false)
     }
   }
+
+  KeepScreenOn(keepOn = state.phase == VideoPlaybackPhase.Playing)
 
   Box(
     modifier = Modifier
@@ -165,6 +169,8 @@ fun VideoPreviewScreen(
             owner.closePlayback()
             onBack()
           },
+          onToggleOrientation = { toggleOrientation(context) },
+          isLandscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         )
         Spacer(Modifier.weight(1f))
         if (state.resumePositionMs > 0L && state.positionMs <= state.resumePositionMs + 1_000L) {
@@ -202,7 +208,9 @@ fun VideoPreviewScreen(
     if (state.phase == VideoPlaybackPhase.InitialBuffering || state.phase == VideoPlaybackPhase.PreparingSource) {
       LoadingOverlay(message = stringResource(R.string.video_loading))
     } else if (state.phase == VideoPlaybackPhase.Rebuffering || state.phase == VideoPlaybackPhase.Seeking) {
-      LoadingOverlay(message = stringResource(R.string.video_rebuffering))
+      Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(48.dp))
+      }
     }
 
     if (state.phase == VideoPlaybackPhase.RecoverableError || state.phase == VideoPlaybackPhase.FatalError) {
@@ -218,37 +226,10 @@ fun VideoPreviewScreen(
   }
 }
 
-@Composable
-internal fun VideoGestureLayer(
-  player: androidx.media3.common.Player?,
-  phase: VideoPlaybackPhase,
-  controlsVisible: Boolean,
-  onSetControlsVisible: (Boolean) -> Unit,
-  onSeekBy: (Long) -> Unit,
-) {
-  val latestControlsVisible = rememberUpdatedState(controlsVisible)
-  val toggleControls = { onSetControlsVisible(!latestControlsVisible.value) }
-  if (!allowsPlaybackGestures(phase)) return
-  Box(
-    modifier = Modifier
-      .fillMaxSize()
-      .semantics { contentDescription = "Video playback surface" }
-      .pointerInput(player, phase) {
-        detectTapGestures(
-          onTap = { toggleControls() },
-          onDoubleTap = { offset ->
-            if (allowsSeekGestures(phase)) {
-              onSeekBy(if (offset.x < size.width / 2f) -10_000L else 10_000L)
-              onSetControlsVisible(true)
-            }
-          },
-        )
-      },
-  )
-}
+// VideoGestureLayer implementation moved to VideoGestureLayer.kt
 
 @Composable
-private fun TopControls(title: String, onBack: () -> Unit) {
+private fun TopControls(title: String, onBack: () -> Unit, onToggleOrientation: () -> Unit, isLandscape: Boolean) {
   val backDescription = stringResource(R.string.back)
   Row(
     modifier = Modifier
@@ -272,6 +253,12 @@ private fun TopControls(title: String, onBack: () -> Unit) {
       style = MaterialTheme.typography.titleMedium,
       modifier = Modifier.weight(1f),
     )
+    IconButton(
+      onClick = onToggleOrientation,
+      modifier = Modifier.semantics { contentDescription = "Toggle Orientation" },
+    ) {
+      Text(if (isLandscape) "📱" else "📺", color = Color.White, style = MaterialTheme.typography.bodyLarge)
+    }
   }
 }
 
