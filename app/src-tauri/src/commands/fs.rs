@@ -2084,8 +2084,12 @@ pub async fn cmd_delete_temp_zip(path: String) -> Result<(), String> {
         let sys_tmp = std::env::temp_dir();
         let canonical_tmp = tmp.canonicalize().ok();
         let canonical_sys_tmp = sys_tmp.canonicalize().ok();
-        let is_in_temp = canonical_tmp.as_ref().map_or(false, |t| canonical_p.starts_with(t))
-            || canonical_sys_tmp.as_ref().map_or(false, |t| canonical_p.starts_with(t));
+        let is_in_temp = canonical_tmp
+            .as_ref()
+            .map_or(false, |t| canonical_p.starts_with(t))
+            || canonical_sys_tmp
+                .as_ref()
+                .map_or(false, |t| canonical_p.starts_with(t));
         if !is_in_temp {
             return Err("Refusing to delete file outside temp directory".to_string());
         }

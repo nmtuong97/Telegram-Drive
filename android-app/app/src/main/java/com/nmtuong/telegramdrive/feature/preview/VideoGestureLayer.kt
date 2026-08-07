@@ -69,6 +69,8 @@ internal fun VideoGestureLayer(
   var startY by remember { mutableFloatStateOf(0f) }
   var startValue by remember { mutableFloatStateOf(0f) }
 
+  val latestControlsVisible by androidx.compose.runtime.rememberUpdatedState(controlsVisible)
+
   LaunchedEffect(accumulatedSeek) {
     if (accumulatedSeek != 0L) {
       showSeekFeedback = true
@@ -103,21 +105,15 @@ internal fun VideoGestureLayer(
         detectTapGestures(
           onTap = {
               if (dragType == DragType.NONE) {
-                  onSetControlsVisible(!controlsVisible)
+                  onSetControlsVisible(!latestControlsVisible)
               }
           },
           onDoubleTap = { offset ->
             if (dragType != DragType.NONE) return@detectTapGestures
             if (allowsSeekGestures(phase)) {
-              if (offset.x < size.width / 2f) {
-                if (seekDirection == 1) accumulatedSeek = 0L
-                accumulatedSeek -= 10_000L
-                seekDirection = -1
-              } else {
-                if (seekDirection == -1) accumulatedSeek = 0L
-                accumulatedSeek += 10_000L
-                seekDirection = 1
-              }
+              val (newSeek, newDir) = GestureUtils.calculateSeekAccumulation(accumulatedSeek, offset.x < size.width / 2f, seekDirection)
+              accumulatedSeek = newSeek
+              seekDirection = newDir
             }
           },
         )
@@ -225,7 +221,18 @@ private enum class DragType { NONE, BRIGHTNESS, VOLUME }
 private fun getCurrentBrightness(context: Context): Float {
     val window = context.findActivity()?.window ?: return 0.5f
     val lp = window.attributes
-    return if (lp.screenBrightness < 0) 0.5f else lp.screenBrightness
+    if (lp.screenBrightness >= 0) return lp.screenBrightness
+
+    return try {
+        val systemBrightness = android.provider.Settings.System.getInt(
+            context.contentResolver,
+            android.provider.Settings.System.SCREEN_BRIGHTNESS
+        )
+        // System brightness is usually 0..255
+        systemBrightness.toFloat() / 255f
+    } catch (e: Exception) {
+        0.5f
+    }
 }
 
 private fun setBrightness(context: Context, value: Float) {

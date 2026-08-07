@@ -96,6 +96,22 @@ fun VideoPreviewScreen(
   val state by owner.uiState.collectAsStateWithLifecycle()
 
   LaunchedEffect(owner, context) { owner.initialize(context) }
+
+  // Track initial orientation to restore when exiting
+  var initialOrientation by androidx.compose.runtime.saveable.rememberSaveable {
+      androidx.compose.runtime.mutableIntStateOf(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
+  }
+  LaunchedEffect(Unit) {
+      if (initialOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+          initialOrientation = context.findActivity()?.requestedOrientation ?: android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+      }
+  }
+
+  val isLandscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+  LaunchedEffect(isLandscape) {
+      applyFullscreen(context, isLandscape)
+  }
+
   DisposableEffect(owner, lifecycleOwner) {
     val observer = LifecycleEventObserver { _, event ->
       when (event) {
@@ -107,10 +123,12 @@ fun VideoPreviewScreen(
     lifecycleOwner.lifecycle.addObserver(observer)
     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
   }
-  DisposableEffect(owner) {
-    onDispose { owner.closePlayback() }
-  }
+  // Only explicitly close when the user navigates back (exits the screen).
+  // The ViewModel's onCleared() will handle releasing resources when the ViewModel is destroyed
+  // (e.g. popping off the backstack), preventing release during a configuration change.
   BackHandler {
+    context.findActivity()?.requestedOrientation = initialOrientation
+    applyFullscreen(context, false)
     owner.closePlayback()
     onBack()
   }
@@ -166,11 +184,13 @@ fun VideoPreviewScreen(
         TopControls(
           title = request.displayName,
           onBack = {
+            context.findActivity()?.requestedOrientation = initialOrientation
+            applyFullscreen(context, false)
             owner.closePlayback()
             onBack()
           },
           onToggleOrientation = { toggleOrientation(context) },
-          isLandscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+          isLandscape = isLandscape
         )
         Spacer(Modifier.weight(1f))
         if (state.resumePositionMs > 0L && state.positionMs <= state.resumePositionMs + 1_000L) {

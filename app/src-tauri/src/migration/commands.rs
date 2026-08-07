@@ -998,7 +998,10 @@ pub async fn cmd_migration_reset_database(state: State<'_, MigrationState>) -> R
 }
 
 #[tauri::command]
-pub async fn cmd_migration_export_queue_csv(csv_content: String, file_path: String) -> Result<(), String> {
+pub async fn cmd_migration_export_queue_csv(
+    csv_content: String,
+    file_path: String,
+) -> Result<(), String> {
     std::fs::write(&file_path, csv_content).map_err(|e| format!("Failed to write CSV: {}", e))?;
     Ok(())
 }

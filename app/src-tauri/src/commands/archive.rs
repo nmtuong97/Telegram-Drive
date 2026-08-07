@@ -250,7 +250,8 @@ async fn download_to_temp_file(
 ) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
     let unique_id = generate_unique_temp_prefix("viewer");
     let archive_path = crate::temp_storage::get_temp_file_path(None, &unique_id, extension);
-    let extract_dir = crate::temp_storage::get_media_temp_dir(None).join(format!("{}_extract", unique_id));
+    let extract_dir =
+        crate::temp_storage::get_media_temp_dir(None).join(format!("{}_extract", unique_id));
 
     tokio::fs::create_dir_all(&extract_dir)
         .await
