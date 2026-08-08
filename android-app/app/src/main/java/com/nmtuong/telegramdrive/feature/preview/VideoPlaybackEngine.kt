@@ -66,7 +66,7 @@ internal object Media3VideoPlayerEngineFactory : VideoPlayerEngineFactory {
 
 @OptIn(UnstableApi::class)
 private class Media3VideoPlayerEngine(context: Context) : VideoPlayerEngine {
-  private val delegate = ExoPlayer.Builder(context.applicationContext).build()
+  private val delegate = ExoPlayer.Builder(context.applicationContext).build().apply { setAudioAttributes(androidx.media3.common.AudioAttributes.DEFAULT, true) }
   private var listener: VideoPlayerEngineListener? = null
   private var listenerAttached = false
   private val bridge = object : Player.Listener {

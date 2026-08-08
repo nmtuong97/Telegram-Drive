@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -61,6 +62,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.common.util.UnstableApi
@@ -85,15 +87,31 @@ fun VideoPreviewScreen(
 ) {
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
-  // This owner is remembered by one open route, not stored in the Activity's
-  // ViewModelStore under a stable file key.
-  val owner = viewModel ?: remember(request, playbackSessionId) {
-    VideoPlayerViewModel(request, mediaAccess)
-  }
+  // Use viewModel to survive configuration changes like orientation change.
+  val owner = viewModel ?: viewModel(
+    key = "video_player_${playbackSessionId}_${request.playbackKey}",
+    factory = VideoPlayerViewModel.Factory(request, mediaAccess)
+  )
   val player by owner.player.collectAsStateWithLifecycle()
   val state by owner.uiState.collectAsStateWithLifecycle()
 
   LaunchedEffect(owner, context) { owner.initialize(context) }
+
+  // Track initial orientation to restore when exiting
+  var initialOrientation by androidx.compose.runtime.saveable.rememberSaveable {
+      androidx.compose.runtime.mutableIntStateOf(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
+  }
+  LaunchedEffect(Unit) {
+      if (initialOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+          initialOrientation = context.findActivity()?.requestedOrientation ?: android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+      }
+  }
+
+  val isLandscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+  LaunchedEffect(isLandscape) {
+      applyFullscreen(context, isLandscape)
+  }
+
   DisposableEffect(owner, lifecycleOwner) {
     val observer = LifecycleEventObserver { _, event ->
       when (event) {
@@ -103,21 +121,26 @@ fun VideoPreviewScreen(
       }
     }
     lifecycleOwner.lifecycle.addObserver(observer)
-    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    onDispose {
+        lifecycleOwner.lifecycle.removeObserver(observer)
+        if (context.findActivity()?.isChangingConfigurations != true) {
+            // Restore orientation/fullscreen state on non-configuration exit
+            context.findActivity()?.requestedOrientation = initialOrientation
+            applyFullscreen(context, false)
+            owner.closePlayback()
+        }
+    }
   }
-  DisposableEffect(owner) {
-    onDispose { owner.closePlayback() }
-  }
-  BackHandler {
-    owner.closePlayback()
-    onBack()
-  }
+
+  BackHandler { onBack() }
   LaunchedEffect(state.phase, state.controlsVisible) {
     if (shouldAutoHideControls(state.phase, state.controlsVisible)) {
       delay(VIDEO_CONTROLS_AUTO_HIDE_DELAY_MS)
       owner.setControlsVisible(false)
     }
   }
+
+  KeepScreenOn(keepOn = state.phase == VideoPlaybackPhase.Playing)
 
   Box(
     modifier = Modifier
@@ -161,10 +184,9 @@ fun VideoPreviewScreen(
       Column(Modifier.fillMaxSize()) {
         TopControls(
           title = request.displayName,
-          onBack = {
-            owner.closePlayback()
-            onBack()
-          },
+          onBack = onBack,
+          onToggleOrientation = { toggleOrientation(context) },
+          isLandscape = isLandscape
         )
         Spacer(Modifier.weight(1f))
         if (state.resumePositionMs > 0L && state.positionMs <= state.resumePositionMs + 1_000L) {
@@ -202,53 +224,25 @@ fun VideoPreviewScreen(
     if (state.phase == VideoPlaybackPhase.InitialBuffering || state.phase == VideoPlaybackPhase.PreparingSource) {
       LoadingOverlay(message = stringResource(R.string.video_loading))
     } else if (state.phase == VideoPlaybackPhase.Rebuffering || state.phase == VideoPlaybackPhase.Seeking) {
-      LoadingOverlay(message = stringResource(R.string.video_rebuffering))
+      Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(48.dp))
+      }
     }
 
     if (state.phase == VideoPlaybackPhase.RecoverableError || state.phase == VideoPlaybackPhase.FatalError) {
       ErrorOverlay(
         kind = state.error,
         onRetry = { owner.retry(context) },
-        onBack = {
-          owner.closePlayback()
-          onBack()
-        },
+        onBack = onBack,
       )
     }
   }
 }
 
-@Composable
-internal fun VideoGestureLayer(
-  player: androidx.media3.common.Player?,
-  phase: VideoPlaybackPhase,
-  controlsVisible: Boolean,
-  onSetControlsVisible: (Boolean) -> Unit,
-  onSeekBy: (Long) -> Unit,
-) {
-  val latestControlsVisible = rememberUpdatedState(controlsVisible)
-  val toggleControls = { onSetControlsVisible(!latestControlsVisible.value) }
-  if (!allowsPlaybackGestures(phase)) return
-  Box(
-    modifier = Modifier
-      .fillMaxSize()
-      .semantics { contentDescription = "Video playback surface" }
-      .pointerInput(player, phase) {
-        detectTapGestures(
-          onTap = { toggleControls() },
-          onDoubleTap = { offset ->
-            if (allowsSeekGestures(phase)) {
-              onSeekBy(if (offset.x < size.width / 2f) -10_000L else 10_000L)
-              onSetControlsVisible(true)
-            }
-          },
-        )
-      },
-  )
-}
+// VideoGestureLayer implementation moved to VideoGestureLayer.kt
 
 @Composable
-private fun TopControls(title: String, onBack: () -> Unit) {
+private fun TopControls(title: String, onBack: () -> Unit, onToggleOrientation: () -> Unit, isLandscape: Boolean) {
   val backDescription = stringResource(R.string.back)
   Row(
     modifier = Modifier
@@ -272,6 +266,21 @@ private fun TopControls(title: String, onBack: () -> Unit) {
       style = MaterialTheme.typography.titleMedium,
       modifier = Modifier.weight(1f),
     )
+    IconButton(
+      onClick = onToggleOrientation,
+      modifier = Modifier.semantics { contentDescription = "Toggle Orientation" },
+    ) {
+      androidx.compose.foundation.Canvas(Modifier.size(24.dp)) {
+        val color = Color.White
+        if (isLandscape) {
+            drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(6.dp.toPx(), 2.dp.toPx()), size = androidx.compose.ui.geometry.Size(12.dp.toPx(), 20.dp.toPx()), cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(3f))
+            drawCircle(color, radius = 1.5.dp.toPx(), center = androidx.compose.ui.geometry.Offset(12.dp.toPx(), 19.dp.toPx()))
+        } else {
+            drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(2.dp.toPx(), 6.dp.toPx()), size = androidx.compose.ui.geometry.Size(20.dp.toPx(), 12.dp.toPx()), cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(3f))
+            drawCircle(color, radius = 1.5.dp.toPx(), center = androidx.compose.ui.geometry.Offset(19.dp.toPx(), 12.dp.toPx()))
+        }
+      }
+    }
   }
 }
 
