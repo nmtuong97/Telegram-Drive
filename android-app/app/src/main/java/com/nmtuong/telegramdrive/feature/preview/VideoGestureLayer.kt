@@ -106,37 +106,61 @@ internal fun VideoGestureLayer(
       .pointerInput(player, phase) {
           awaitEachGesture {
               val down = awaitFirstDown(requireUnconsumed = false)
-              val startX = down.position.x
-              val startY = down.position.y
-              var dragType = DragType.NONE
-              var startValue = 0f
-              var hasDragged = false
+              val interaction = processSingleInteraction(
+                  down = down,
+                  touchSlop = touchSlop,
+                  onDragStart = { startX: Float ->
+                      isDragging = true
+                      if (startX < size.width / 2f) {
+                          startValue = getCurrentBrightness(context)
+                          showBrightness = true
+                          DragType.BRIGHTNESS
+                      } else {
+                          startValue = getCurrentVolume(context)
+                          showVolume = true
+                          DragType.VOLUME
+                      }
+                  },
+                  onDrag = { dragType: DragType, deltaY: Float ->
+                      val deltaPercent = deltaY / size.height
+                      if (dragType == DragType.BRIGHTNESS) {
+                          val newValue = (startValue + deltaPercent).coerceIn(0f, 1f)
+                          setBrightness(context, newValue)
+                          brightnessPercent = (newValue * 100).toInt()
+                      } else if (dragType == DragType.VOLUME) {
+                          val newValue = (startValue + deltaPercent).coerceIn(0f, 1f)
+                          setVolume(context, newValue)
+                          volumePercent = (newValue * 100).toInt()
+                      }
+                  }
+              )
 
-              do {
-                  val event = awaitPointerEvent()
-                  val pointer = event.changes.firstOrNull { it.id == down.id }
-                  if (pointer != null) {
-                      if (pointer.pressed) {
-                          val dx = pointer.position.x - startX
-                          val dy = pointer.position.y - startY
+              if (interaction == InteractionResult.DRAG) {
+                  isDragging = false
+                  if (showBrightness) { showBrightness = false; showBrightness = true }
+                  if (showVolume) { showVolume = false; showVolume = true }
+              } else if (interaction == InteractionResult.TAP) {
+                  val tapTimeout = withTimeoutOrNull(300L) {
+                      awaitFirstDown(requireUnconsumed = false)
+                  }
 
-                          if (dragType == DragType.NONE && abs(dy) > touchSlop && abs(dy) > abs(dx)) {
-                              hasDragged = true
+                  if (tapTimeout != null) {
+                      val secondInteraction = processSingleInteraction(
+                          down = tapTimeout,
+                          touchSlop = touchSlop,
+                          onDragStart = { startX: Float ->
                               isDragging = true
                               if (startX < size.width / 2f) {
-                                  dragType = DragType.BRIGHTNESS
                                   startValue = getCurrentBrightness(context)
                                   showBrightness = true
+                                  DragType.BRIGHTNESS
                               } else {
-                                  dragType = DragType.VOLUME
                                   startValue = getCurrentVolume(context)
                                   showVolume = true
+                                  DragType.VOLUME
                               }
-                          }
-
-                          if (dragType != DragType.NONE) {
-                              pointer.consume()
-                              val deltaY = startY - pointer.position.y
+                          },
+                          onDrag = { dragType: DragType, deltaY: Float ->
                               val deltaPercent = deltaY / size.height
                               if (dragType == DragType.BRIGHTNESS) {
                                   val newValue = (startValue + deltaPercent).coerceIn(0f, 1f)
@@ -148,33 +172,22 @@ internal fun VideoGestureLayer(
                                   volumePercent = (newValue * 100).toInt()
                               }
                           }
-                      }
-                  }
-              } while (event.changes.any { it.pressed })
+                      )
 
-              isDragging = false
-
-              if (!hasDragged) {
-                  val tapTimeout = withTimeoutOrNull(300L) {
-                      awaitFirstDown(requireUnconsumed = false)
-                  }
-
-                  if (tapTimeout != null) {
-                      do {
-                          val event2 = awaitPointerEvent()
-                      } while (event2.changes.any { it.pressed })
-
-                      if (allowsSeekGestures(phase)) {
-                          val (newSeek, newDir) = GestureUtils.calculateSeekAccumulation(accumulatedSeek, tapTimeout.position.x < size.width / 2f, seekDirection)
-                          accumulatedSeek = newSeek
-                          seekDirection = newDir
+                      if (secondInteraction == InteractionResult.DRAG) {
+                          isDragging = false
+                          if (showBrightness) { showBrightness = false; showBrightness = true }
+                          if (showVolume) { showVolume = false; showVolume = true }
+                      } else if (secondInteraction == InteractionResult.TAP) {
+                          if (allowsSeekGestures(phase)) {
+                              val (newSeek, newDir) = GestureUtils.calculateSeekAccumulation(accumulatedSeek, tapTimeout.position.x < size.width / 2f, seekDirection)
+                              accumulatedSeek = newSeek
+                              seekDirection = newDir
+                          }
                       }
                   } else {
                       onSetControlsVisible(!latestControlsVisible)
                   }
-              } else {
-                  if (showBrightness) { showBrightness = false; showBrightness = true }
-                  if (showVolume) { showVolume = false; showVolume = true }
               }
           }
       },
@@ -306,4 +319,44 @@ private fun setVolume(context: Context, value: Float) {
     val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
     val vol = (value * max).toInt()
     audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, vol, 0)
+}
+
+private enum class InteractionResult { TAP, DRAG, CANCELLED }
+
+private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.processSingleInteraction(
+    down: androidx.compose.ui.input.pointer.PointerInputChange,
+    touchSlop: Float,
+    onDragStart: (Float) -> DragType,
+    onDrag: (DragType, Float) -> Unit,
+): InteractionResult {
+    val startX = down.position.x
+    val startY = down.position.y
+    var dragType = DragType.NONE
+    var result = InteractionResult.TAP
+
+    do {
+        val event = awaitPointerEvent()
+        val pointer = event.changes.firstOrNull { it.id == down.id }
+        if (pointer != null && pointer.pressed) {
+            val dx = pointer.position.x - startX
+            val dy = pointer.position.y - startY
+
+            if (result == InteractionResult.TAP && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
+                if (abs(dy) > abs(dx)) {
+                    dragType = onDragStart(startX)
+                    result = InteractionResult.DRAG
+                } else {
+                    result = InteractionResult.CANCELLED
+                }
+            }
+
+            if (result == InteractionResult.DRAG) {
+                pointer.consume()
+                val deltaY = startY - pointer.position.y
+                onDrag(dragType, deltaY)
+            }
+        }
+    } while (event.changes.any { it.pressed })
+
+    return result
 }

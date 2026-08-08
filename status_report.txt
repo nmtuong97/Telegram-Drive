@@ -1,10 +1,9 @@
-1. new commit SHA: bae2230d8a8798407680a2835f7b11e951600568
+1. new commit SHA: 87fe8acbf5b03785a32b8e78a71d33f5d8536c54
 2. exact Android files changed:
    - android-app/app/src/main/java/com/nmtuong/telegramdrive/feature/preview/VideoGestureLayer.kt
-   - android-app/app/src/main/java/com/nmtuong/telegramdrive/feature/preview/VideoPreviewScreen.kt
 3. Android tests executed:
    - ./gradlew app:testDebugUnitTest (PASSED)
    - ./gradlew app:lintDebug (PASSED)
 4. final status: READY (subject to CI confirmation)
 
-Note: The `cargo test` command in `app/src-tauri` timed out in the execution environment due to severe CPU/memory constraints pulling down Rust + Glib build tools, but the Tauri tree is completely clean and untouched.
+Note: Extracted touch-slop handling explicitly logic for detecting TAPs, DRAGs, and CANCELLED gestures to recursively classify second taps, preventing bleed-over drags from registering incorrectly as Taps while maintaining touch slop logic dynamically across pointer iterations.
