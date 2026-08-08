@@ -121,17 +121,20 @@ fun VideoPreviewScreen(
       }
     }
     lifecycleOwner.lifecycle.addObserver(observer)
-    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    onDispose {
+        lifecycleOwner.lifecycle.removeObserver(observer)
+        if (context.findActivity()?.isChangingConfigurations != true) {
+            owner.closePlayback()
+        }
+    }
   }
-  // Only explicitly close when the user navigates back (exits the screen).
-  // The ViewModel's onCleared() will handle releasing resources when the ViewModel is destroyed
-  // (e.g. popping off the backstack), preventing release during a configuration change.
-  BackHandler {
-    context.findActivity()?.requestedOrientation = initialOrientation
-    applyFullscreen(context, false)
-    owner.closePlayback()
-    onBack()
+  val performExit = {
+      context.findActivity()?.requestedOrientation = initialOrientation
+      applyFullscreen(context, false)
+      onBack()
   }
+
+  BackHandler { performExit() }
   LaunchedEffect(state.phase, state.controlsVisible) {
     if (shouldAutoHideControls(state.phase, state.controlsVisible)) {
       delay(VIDEO_CONTROLS_AUTO_HIDE_DELAY_MS)
@@ -183,12 +186,7 @@ fun VideoPreviewScreen(
       Column(Modifier.fillMaxSize()) {
         TopControls(
           title = request.displayName,
-          onBack = {
-            context.findActivity()?.requestedOrientation = initialOrientation
-            applyFullscreen(context, false)
-            owner.closePlayback()
-            onBack()
-          },
+          onBack = performExit,
           onToggleOrientation = { toggleOrientation(context) },
           isLandscape = isLandscape
         )
@@ -237,10 +235,7 @@ fun VideoPreviewScreen(
       ErrorOverlay(
         kind = state.error,
         onRetry = { owner.retry(context) },
-        onBack = {
-          owner.closePlayback()
-          onBack()
-        },
+        onBack = performExit,
       )
     }
   }
