@@ -1,5 +1,6 @@
 package com.nmtuong.telegramdrive.feature.preview
 
+import androidx.compose.foundation.layout.size
 import android.content.Context
 import android.media.AudioManager
 import androidx.compose.animation.AnimatedVisibility
@@ -7,8 +8,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -102,73 +104,79 @@ internal fun VideoGestureLayer(
       .fillMaxSize()
       .semantics { contentDescription = "Video playback surface" }
       .pointerInput(player, phase) {
-        detectTapGestures(
-          onTap = {
-              if (dragType == DragType.NONE) {
-                  onSetControlsVisible(!latestControlsVisible)
-              }
-          },
-          onDoubleTap = { offset ->
-            if (dragType != DragType.NONE) return@detectTapGestures
-            if (allowsSeekGestures(phase)) {
-              val (newSeek, newDir) = GestureUtils.calculateSeekAccumulation(accumulatedSeek, offset.x < size.width / 2f, seekDirection)
-              accumulatedSeek = newSeek
-              seekDirection = newDir
-            }
-          },
-        )
-      }
-      .pointerInput(player, phase) {
-          detectDragGestures(
-              onDragStart = { offset ->
-                  dragType = DragType.NONE
-                  isDragging = true
-                  startY = offset.y
-              },
-              onDragEnd = {
-                  isDragging = false
-                  dragType = DragType.NONE
-                  if (showBrightness) { showBrightness = false; showBrightness = true }
-                  if (showVolume) { showVolume = false; showVolume = true }
-              },
-              onDragCancel = {
-                  isDragging = false
-                  dragType = DragType.NONE
-                  showBrightness = false
-                  showVolume = false
-              },
-              onDrag = { change, _ ->
-                  change.consume()
-                  if (dragType == DragType.NONE) {
-                      if (abs(change.position.y - startY) > touchSlop) {
-                          if (change.position.x < size.width / 2f) {
-                              dragType = DragType.BRIGHTNESS
-                              startValue = getCurrentBrightness(context)
-                              showBrightness = true
-                          } else {
-                              dragType = DragType.VOLUME
-                              startValue = getCurrentVolume(context)
-                              showVolume = true
+          awaitEachGesture {
+              val down = awaitFirstDown(requireUnconsumed = false)
+              val startX = down.position.x
+              val startY = down.position.y
+              var dragType = DragType.NONE
+              var startValue = 0f
+              var hasDragged = false
+
+              do {
+                  val event = awaitPointerEvent()
+                  val pointer = event.changes.firstOrNull { it.id == down.id }
+                  if (pointer != null) {
+                      if (pointer.pressed) {
+                          val dx = pointer.position.x - startX
+                          val dy = pointer.position.y - startY
+
+                          if (dragType == DragType.NONE && abs(dy) > touchSlop && abs(dy) > abs(dx)) {
+                              hasDragged = true
+                              isDragging = true
+                              if (startX < size.width / 2f) {
+                                  dragType = DragType.BRIGHTNESS
+                                  startValue = getCurrentBrightness(context)
+                                  showBrightness = true
+                              } else {
+                                  dragType = DragType.VOLUME
+                                  startValue = getCurrentVolume(context)
+                                  showVolume = true
+                              }
+                          }
+
+                          if (dragType != DragType.NONE) {
+                              pointer.consume()
+                              val deltaY = startY - pointer.position.y
+                              val deltaPercent = deltaY / size.height
+                              if (dragType == DragType.BRIGHTNESS) {
+                                  val newValue = (startValue + deltaPercent).coerceIn(0f, 1f)
+                                  setBrightness(context, newValue)
+                                  brightnessPercent = (newValue * 100).toInt()
+                              } else if (dragType == DragType.VOLUME) {
+                                  val newValue = (startValue + deltaPercent).coerceIn(0f, 1f)
+                                  setVolume(context, newValue)
+                                  volumePercent = (newValue * 100).toInt()
+                              }
                           }
                       }
                   }
+              } while (event.changes.any { it.pressed })
 
-                  if (dragType != DragType.NONE) {
-                      val deltaY = startY - change.position.y
-                      val deltaPercent = deltaY / size.height
+              isDragging = false
 
-                      if (dragType == DragType.BRIGHTNESS) {
-                          val newValue = (startValue + deltaPercent).coerceIn(0f, 1f)
-                          setBrightness(context, newValue)
-                          brightnessPercent = (newValue * 100).toInt()
-                      } else if (dragType == DragType.VOLUME) {
-                          val newValue = (startValue + deltaPercent).coerceIn(0f, 1f)
-                          setVolume(context, newValue)
-                          volumePercent = (newValue * 100).toInt()
-                      }
+              if (!hasDragged) {
+                  val tapTimeout = withTimeoutOrNull(300L) {
+                      awaitFirstDown(requireUnconsumed = false)
                   }
+
+                  if (tapTimeout != null) {
+                      do {
+                          val event2 = awaitPointerEvent()
+                      } while (event2.changes.any { it.pressed })
+
+                      if (allowsSeekGestures(phase)) {
+                          val (newSeek, newDir) = GestureUtils.calculateSeekAccumulation(accumulatedSeek, tapTimeout.position.x < size.width / 2f, seekDirection)
+                          accumulatedSeek = newSeek
+                          seekDirection = newDir
+                      }
+                  } else {
+                      onSetControlsVisible(!latestControlsVisible)
+                  }
+              } else {
+                  if (showBrightness) { showBrightness = false; showBrightness = true }
+                  if (showVolume) { showVolume = false; showVolume = true }
               }
-          )
+          }
       },
   ) {
       AnimatedVisibility(
@@ -201,10 +209,54 @@ internal fun VideoGestureLayer(
               contentAlignment = Alignment.Center
           ) {
               Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                  Text(
-                      text = if (showBrightness) "☀️" else "🔊",
-                      fontSize = 32.sp
-                  )
+                  androidx.compose.foundation.Canvas(Modifier.size(48.dp)) {
+                      val color = Color.White
+                      if (showBrightness) {
+                          drawCircle(color, radius = 8.dp.toPx(), center = center, style = androidx.compose.ui.graphics.drawscope.Stroke(3f))
+                          val rayLength = 4.dp.toPx()
+                          val rayOffset = 12.dp.toPx()
+                          for (i in 0 until 8) {
+                              val angle = i * Math.PI / 4
+                              val startX = center.x + (rayOffset * kotlin.math.cos(angle)).toFloat()
+                              val startY = center.y + (rayOffset * kotlin.math.sin(angle)).toFloat()
+                              val endX = center.x + ((rayOffset + rayLength) * kotlin.math.cos(angle)).toFloat()
+                              val endY = center.y + ((rayOffset + rayLength) * kotlin.math.sin(angle)).toFloat()
+                              drawLine(color, start = androidx.compose.ui.geometry.Offset(startX, startY), end = androidx.compose.ui.geometry.Offset(endX, endY), strokeWidth = 3f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                          }
+                      } else {
+                          val cx = center.x
+                          val cy = center.y
+                          val speakerPath = androidx.compose.ui.graphics.Path().apply {
+                              moveTo(cx - 12.dp.toPx(), cy - 4.dp.toPx())
+                              lineTo(cx - 12.dp.toPx(), cy + 4.dp.toPx())
+                              lineTo(cx - 6.dp.toPx(), cy + 4.dp.toPx())
+                              lineTo(cx, cy + 10.dp.toPx())
+                              lineTo(cx, cy - 10.dp.toPx())
+                              lineTo(cx - 6.dp.toPx(), cy - 4.dp.toPx())
+                              close()
+                          }
+                          drawPath(speakerPath, color)
+
+                          drawArc(
+                              color = color,
+                              startAngle = -60f,
+                              sweepAngle = 120f,
+                              useCenter = false,
+                              topLeft = androidx.compose.ui.geometry.Offset(cx - 4.dp.toPx(), cy - 6.dp.toPx()),
+                              size = androidx.compose.ui.geometry.Size(12.dp.toPx(), 12.dp.toPx()),
+                              style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                          )
+                          drawArc(
+                              color = color,
+                              startAngle = -60f,
+                              sweepAngle = 120f,
+                              useCenter = false,
+                              topLeft = androidx.compose.ui.geometry.Offset(cx - 8.dp.toPx(), cy - 10.dp.toPx()),
+                              size = androidx.compose.ui.geometry.Size(20.dp.toPx(), 20.dp.toPx()),
+                              style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                          )
+                      }
+                  }
                   Text(
                       text = "${if (showBrightness) brightnessPercent else volumePercent}%",
                       color = Color.White,

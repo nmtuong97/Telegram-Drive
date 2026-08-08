@@ -124,17 +124,15 @@ fun VideoPreviewScreen(
     onDispose {
         lifecycleOwner.lifecycle.removeObserver(observer)
         if (context.findActivity()?.isChangingConfigurations != true) {
+            // Restore orientation/fullscreen state on non-configuration exit
+            context.findActivity()?.requestedOrientation = initialOrientation
+            applyFullscreen(context, false)
             owner.closePlayback()
         }
     }
   }
-  val performExit = {
-      context.findActivity()?.requestedOrientation = initialOrientation
-      applyFullscreen(context, false)
-      onBack()
-  }
 
-  BackHandler { performExit() }
+  BackHandler { onBack() }
   LaunchedEffect(state.phase, state.controlsVisible) {
     if (shouldAutoHideControls(state.phase, state.controlsVisible)) {
       delay(VIDEO_CONTROLS_AUTO_HIDE_DELAY_MS)
@@ -186,7 +184,7 @@ fun VideoPreviewScreen(
       Column(Modifier.fillMaxSize()) {
         TopControls(
           title = request.displayName,
-          onBack = performExit,
+          onBack = onBack,
           onToggleOrientation = { toggleOrientation(context) },
           isLandscape = isLandscape
         )
@@ -235,7 +233,7 @@ fun VideoPreviewScreen(
       ErrorOverlay(
         kind = state.error,
         onRetry = { owner.retry(context) },
-        onBack = performExit,
+        onBack = onBack,
       )
     }
   }
@@ -272,7 +270,16 @@ private fun TopControls(title: String, onBack: () -> Unit, onToggleOrientation: 
       onClick = onToggleOrientation,
       modifier = Modifier.semantics { contentDescription = "Toggle Orientation" },
     ) {
-      Text(if (isLandscape) "📱" else "📺", color = Color.White, style = MaterialTheme.typography.bodyLarge)
+      androidx.compose.foundation.Canvas(Modifier.size(24.dp)) {
+        val color = Color.White
+        if (isLandscape) {
+            drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(6.dp.toPx(), 2.dp.toPx()), size = androidx.compose.ui.geometry.Size(12.dp.toPx(), 20.dp.toPx()), cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(3f))
+            drawCircle(color, radius = 1.5.dp.toPx(), center = androidx.compose.ui.geometry.Offset(12.dp.toPx(), 19.dp.toPx()))
+        } else {
+            drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(2.dp.toPx(), 6.dp.toPx()), size = androidx.compose.ui.geometry.Size(20.dp.toPx(), 12.dp.toPx()), cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(3f))
+            drawCircle(color, radius = 1.5.dp.toPx(), center = androidx.compose.ui.geometry.Offset(19.dp.toPx(), 12.dp.toPx()))
+        }
+      }
     }
   }
 }
